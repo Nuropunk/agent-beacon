@@ -72,6 +72,7 @@ var localOnlyRules = []localOnlyRule{
 	{path: "endpoint repair", why: whyHeldEngine, when: harnessFlagHeld("harness")},
 	{path: "endpoint hooks install", why: whyAllHarnesses, when: flagTrue("all")},
 	{path: "endpoint hooks install", why: whyHeldEngine, when: harnessFlagHeld("harness")},
+	{path: "endpoint integrations claude-cowork setup", why: "--ngrok opens a public tunnel to the local OTLP receiver", when: flagTrue("ngrok")},
 	{path: "cloud", why: "it pulls or uploads cloud-agent traces through Devin, GCS or S3"},
 	{path: "ci", why: whySendsOff, when: anyFlagChanged("forward", "forward-endpoint", "upload")},
 	{path: "mcp connect", why: "it registers the Beacon Cloud MCP server in other vendors' agents"},

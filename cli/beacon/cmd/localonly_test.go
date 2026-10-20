@@ -145,6 +145,8 @@ func TestLocalOnlyFlagRules(t *testing.T) {
 		{"git setup", map[string]string{"share-notes": "false"}, false},
 		{"git setup", map[string]string{"share-notes": "true"}, true},
 		{"git setup", map[string]string{"share-sessions": "true"}, true},
+		{"endpoint integrations claude-cowork setup", nil, false},
+		{"endpoint integrations claude-cowork setup", map[string]string{"ngrok": "true"}, true},
 		{"ci exec", nil, false},
 		{"ci exec", map[string]string{"forward": "splunk"}, true},
 		{"ci start", map[string]string{"forward-endpoint": "https://hec.example"}, true},
