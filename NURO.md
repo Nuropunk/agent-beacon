@@ -23,19 +23,28 @@ lock off; that takes a build with `EDITION=community`. Under the lock:
   cloud-agent traces, onboarding signups, the enterprise build download, self-updates and release
   checks, Cursor usage sync, the SIEM and bucket forwarding packs, Splunk and Falcon LogScale
   forwarding from the collector (the `--splunk-*` and `--falcon-*` install and repair flags), CI
-  forwarding, the Beacon Cloud MCP server and its tokens, rule downloads, third-party memory
-  evaluations, handoffs to other vendors' agents, git note pushes that skip hooks (`git notes push`
-  and the pre-push hook, which runs as `|| true` so the person's own push goes on; `beacon git setup
-  --share-notes=false` removes one an earlier install left), session sharing
-  on git push, public tunnels (the Claude Cowork `--ngrok` flag), and installing Beacon skills
-  where other vendors' agents read them. `beacon mcp serve` runs over stdio only, and installing
-  hooks for "all" runtimes is refused so each runtime is named. `cli/beacon/cmd/localonly.go` lists
-  all 45 rules, and a test checks that each one names a real command.
+  forwarding, pointing VS Code Copilot's telemetry at an address off the machine, the Beacon Cloud
+  MCP server and its tokens, rule downloads, third-party memory evaluations, handoffs to other
+  vendors' agents, git note pushes that skip hooks (`git notes push` and the pre-push hook, whose
+  script ignores the refusal so the person's own push goes on; `beacon git setup
+  --share-notes=false` removes one an earlier install left), session sharing on git push, public
+  tunnels (the Claude Cowork `--ngrok` flag), installing Beacon skills where other vendors' agents
+  read them, and copying captured trace content into a project's `.agents/skills` (`memory skills
+  install`). `beacon mcp serve` runs over stdio only, and installing hooks for "all" runtimes is
+  refused so each runtime is named. `cli/beacon/cmd/localonly.go` lists all 47 rules, a test checks
+  that each one names a real command, and another names every egress command a check has found, so
+  deleting a rule fails a test.
 - The collector config leaves out any Splunk or Falcon destination, including one an earlier
   install left in `config.json`, so the collector writes only the local log. A collector still
   running on a config from a community install keeps it until `beacon endpoint repair` rewrites it.
-- The process's default HTTP transport dials loopback addresses only, so a path the rules miss
-  still cannot reach the network.
+- Install and repair never re-render or restart a Beacon Cloud forwarder, even one an earlier build
+  connected; it is left as it is, to be removed with that build's `beacon endpoint uninstall`.
+- Claude Code's settings get the local collector as their only OTLP endpoint: a per-signal
+  endpoint left there (`OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` and the like) is removed, since it would
+  outrank the local one.
+- The process's default HTTP transport dials loopback addresses only, and dials `localhost` as
+  127.0.0.1 instead of resolving it, so a path the rules miss still cannot reach the network from
+  inside Beacon.
 - The hooks binary never uploads (`cli/beacon-hooks/internal/cloudshuttle`).
 - Grok is held: Beacon does not run its binary during discovery and refuses to install hooks for
   it, sync it or backfill from it.
@@ -83,6 +92,12 @@ to verify it against; this fork does not use it, and neither should you.
 
 These come from reading the upstream code and docs for this fork. They are notes, not changes:
 
+- The GitHub Action in `action.yml` installs upstream's community release, not this edition, and
+  uploads the runtime log as a workflow artifact by default. Do not use it for Nuro's work.
+- The macOS package still carries upstream's Jamf helper scripts that install S3, GCS and Falcon
+  forwarders (`packaging/macos/jamf`). Beacon never runs them; do not run them by hand.
+- `.goreleaser.yaml` still names upstream's release and Homebrew targets. A release from this fork
+  needs its own targets and the owner's go.
 - The lock covers the processes this build runs. If the machine ever ran another Beacon build,
   run that build's `beacon endpoint uninstall` first and remove any forwarding service it set up
   (a Vector pack or Beacon Cloud connection): those run as their own processes, outside the lock.
