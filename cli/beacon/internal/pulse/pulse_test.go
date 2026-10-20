@@ -149,6 +149,14 @@ func TestPulseCopiesOnlyNameShapedHarnessesAndMethods(t *testing.T) {
 	if h := harness(t, p, "claude_code"); len(h.Methods) != 0 || h.Events24h != 1 {
 		t.Errorf("an odd method should be dropped and the event kept: %+v", h)
 	}
+	// A capitalized name Beacon does not normalize keeps its attribution, lowercased.
+	p = build(t, line("Hermes", "hook", "observed", now.Add(-time.Minute), ""), Options{Expect: []string{"Factory"}})
+	if h := harness(t, p, "hermes"); h.Events24h != 1 {
+		t.Errorf("Hermes should count as hermes: %+v", h)
+	}
+	if h := harness(t, p, "factory"); h.Grade != GradeDark {
+		t.Errorf("an expected Factory should be listed DARK: %+v", h)
+	}
 }
 
 func TestPulseReadsLongLines(t *testing.T) {

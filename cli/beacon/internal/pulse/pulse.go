@@ -173,7 +173,7 @@ func FromReaders(readers []io.Reader, opts Options) (Pulse, error) {
 		}
 	}
 	for _, name := range opts.Expect {
-		if name = asymptoteobserve.NormalizeHarnessName(name); token.MatchString(name) {
+		if name = strings.ToLower(asymptoteobserve.NormalizeHarnessName(name)); token.MatchString(name) {
 			get(name)
 		}
 	}
@@ -222,7 +222,7 @@ func count(get func(string) *tally, line []byte, now time.Time) {
 	if err := json.Unmarshal(line, &event); err != nil {
 		return
 	}
-	name := asymptoteobserve.NormalizeHarnessName(event.Harness.Name)
+	name := strings.ToLower(asymptoteobserve.NormalizeHarnessName(event.Harness.Name))
 	ts, err := time.Parse(time.RFC3339Nano, event.Timestamp)
 	if name == "" || err != nil {
 		return
