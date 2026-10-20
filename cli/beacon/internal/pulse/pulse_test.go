@@ -129,6 +129,28 @@ func TestPulseCarriesNoContent(t *testing.T) {
 	}
 }
 
+// Harness names and methods are free text in a log line; only ones shaped like names reach a pulse.
+func TestPulseCopiesOnlyNameShapedHarnessesAndMethods(t *testing.T) {
+	log := line("/Users/someone/private repo", "hook", "observed", now.Add(-time.Minute), "") +
+		line("claude_code", "cat /Users/someone/private.txt", "observed", now.Add(-time.Minute), "")
+	p := build(t, log, Options{Expect: []string{"secret host/x"}})
+	data, err := json.Marshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, leak := range []string{"someone", "private", "/Users", "secret"} {
+		if strings.Contains(string(data), leak) {
+			t.Errorf("pulse carries %q: %s", leak, data)
+		}
+	}
+	if h := harness(t, p, "unknown"); h.Events24h != 1 || h.Grade != GradeLive {
+		t.Errorf("an odd harness name should still count, as unknown: %+v", h)
+	}
+	if h := harness(t, p, "claude_code"); len(h.Methods) != 0 || h.Events24h != 1 {
+		t.Errorf("an odd method should be dropped and the event kept: %+v", h)
+	}
+}
+
 func TestPulseReadsLongLines(t *testing.T) {
 	big := `,"prompt":{"text":"` + strings.Repeat("x", 3<<20) + `"}`
 	p := build(t, line("codex", "otlp", "observed", now.Add(-time.Minute), big), Options{})

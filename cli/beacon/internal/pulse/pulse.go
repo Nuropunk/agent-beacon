@@ -16,6 +16,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -23,6 +24,11 @@ import (
 
 	"github.com/asymptote-labs/agent-beacon/pkg/asymptoteobserve"
 )
+
+// token matches the harness names and collection methods Beacon writes. A log line can carry any
+// text in those fields, so anything else (a path, a sentence) is not copied into a pulse: a name is
+// counted as "unknown" and a method is dropped.
+var token = regexp.MustCompile(`^[a-z0-9][a-z0-9_.-]{0,63}$`)
 
 // Schema names the pulse document format.
 const Schema = "beacon.pulse.v1"
@@ -167,7 +173,7 @@ func FromReaders(readers []io.Reader, opts Options) (Pulse, error) {
 		}
 	}
 	for _, name := range opts.Expect {
-		if name = asymptoteobserve.NormalizeHarnessName(name); name != "" {
+		if name = asymptoteobserve.NormalizeHarnessName(name); token.MatchString(name) {
 			get(name)
 		}
 	}
@@ -221,11 +227,14 @@ func count(get func(string) *tally, line []byte, now time.Time) {
 	if name == "" || err != nil {
 		return
 	}
+	if !token.MatchString(name) {
+		name = "unknown"
+	}
 	t := get(name)
 	if ts.After(t.last) {
 		t.last = ts.UTC()
 	}
-	if m := strings.TrimSpace(event.Harness.CollectionMethod); m != "" {
+	if m := strings.ToLower(strings.TrimSpace(event.Harness.CollectionMethod)); token.MatchString(m) {
 		t.methods[m] = true
 	}
 	age := now.Sub(ts)
