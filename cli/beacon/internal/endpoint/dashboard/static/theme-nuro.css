@@ -1,0 +1,1025 @@
+/*
+ * Nuro edition theme for the Beacon dashboard.
+ *
+ * Served only by the nuro edition, which marks every page <html data-theme="nuro"> and links this
+ * sheet after styles.css. It recolors the upstream light dashboard into the NUE system palette:
+ * a dark void, turquoise and aqua light, warm gold and fire accents. Nuro's own nue color pair is
+ * still undecided, so this theme uses neither candidate pair; it uses the shared NUE palette only.
+ *
+ * Fonts are referenced with local() only and never fetched: Brainbow for display when installed,
+ * JetBrains Mono for body text, falling back to the system monospace.
+ *
+ * Everything below the token block is generated from styles.css: each hard-coded light color is
+ * mapped to a theme token (surfaces to --panel, gray text to --muted, tinted badges to translucent
+ * tints of their own hue), then gradients and data colors are tuned by hand at the end.
+ */
+
+@font-face {
+  font-family: "Brainbow";
+  src: local("Brainbow"), local("Brainbow-Regular");
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  src: local("JetBrains Mono"), local("JetBrainsMono-Regular");
+  font-display: swap;
+}
+
+html[data-theme="nuro"] {
+  color-scheme: dark;
+  --nue-void: #080812;
+  --nue-deep: #0a0e18;
+  --nue-turquoise: #1a5a6a;
+  --nue-aqua: #40c0d0;
+  --nue-violet: #6b5bff;
+  --nue-gold: #d4a574;
+  --nue-gold-bright: #f4c430;
+  --nue-orange: #e07b39;
+  --bg: var(--nue-void);
+  --panel: var(--nue-deep);
+  --panel-soft: #0f1624;
+  --text: #e2e8f0;
+  --muted: #8a9bb0;
+  --line: rgba(64, 192, 208, 0.18);
+  --accent: var(--nue-aqua);
+  --accent-soft: rgba(64, 192, 208, 0.14);
+  --danger: #ff6b81;
+  --warn: var(--nue-gold-bright);
+  --ok: #4fd1a5;
+  --nue-glow: 0 0 20px rgba(64, 192, 208, 0.18);
+}
+
+html[data-theme="nuro"] body {
+  background:
+    radial-gradient(circle at 100% 0%, rgba(26, 90, 106, 0.35), transparent 42%),
+    radial-gradient(circle at 0% 100%, rgba(107, 91, 255, 0.12), transparent 38%),
+    var(--nue-void);
+  color: var(--text);
+  font-family: "JetBrains Mono", "Fira Code", ui-monospace, monospace;
+  letter-spacing: 0.01em;
+}
+
+html[data-theme="nuro"] h1,
+html[data-theme="nuro"] h2,
+html[data-theme="nuro"] h3,
+html[data-theme="nuro"] .eyebrow {
+  font-family: "Brainbow", "JetBrains Mono", ui-monospace, monospace;
+  letter-spacing: 0.04em;
+}
+
+html[data-theme="nuro"] h1,
+html[data-theme="nuro"] .dashboard-hero h2,
+html[data-theme="nuro"] .inventory-page-head h1,
+html[data-theme="nuro"] .detections-page-head h1,
+html[data-theme="nuro"] .findings-page-head h1 {
+  color: var(--nue-gold);
+  text-shadow: 0 0 18px rgba(212, 165, 116, 0.25);
+}
+
+html[data-theme="nuro"] .topbar .eyebrow::after {
+  content: " \00b7  nuro edition";
+  color: var(--nue-aqua);
+}
+
+html[data-theme="nuro"] a {
+  color: var(--nue-aqua);
+}
+
+html[data-theme="nuro"] .card,
+html[data-theme="nuro"] button.card:hover {
+  transition: box-shadow 300ms ease, border-color 300ms ease;
+}
+
+html[data-theme="nuro"] .card:hover,
+html[data-theme="nuro"] button.card:hover {
+  box-shadow: var(--nue-glow);
+  border-color: rgba(64, 192, 208, 0.4);
+}
+
+html[data-theme="nuro"] .nav-toggle a.active,
+html[data-theme="nuro"] .session-filter-tabs button.active,
+html[data-theme="nuro"] body[data-page="sessions"] .quick-filters button.active {
+  background: var(--nue-turquoise);
+  color: #ffffff;
+  box-shadow: var(--nue-glow);
+}
+
+/* Generated from styles.css. */
+html[data-theme="nuro"] .topbar {
+  background: rgba(10, 14, 24, 0.95);
+}
+
+
+html[data-theme="nuro"] .nav-toggle {
+  background: rgba(10, 14, 24, 0.96);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.3);
+}
+
+
+html[data-theme="nuro"] .card-danger {
+  border-color: var(--line);
+}
+
+
+html[data-theme="nuro"] .card-warn {
+  border-color: var(--line);
+}
+
+
+html[data-theme="nuro"] .search-panel {
+  border-color: var(--line);
+  box-shadow: 0 18px 45px rgba(0, 0, 0, 0.2);
+}
+
+
+html[data-theme="nuro"] .search-input {
+  border-color: var(--line);
+  background: var(--panel);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+}
+
+
+html[data-theme="nuro"] .search-input::placeholder {
+  color: var(--muted);
+}
+
+
+html[data-theme="nuro"] .search-input:focus {
+  box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.4);
+}
+
+
+html[data-theme="nuro"] .search-icon {
+  border: 2px solid var(--line);
+}
+
+
+html[data-theme="nuro"] .filter-section {
+  background: var(--panel-soft);
+}
+
+
+html[data-theme="nuro"] .advanced-filters {
+  background: var(--panel-soft);
+}
+
+
+html[data-theme="nuro"] .notice {
+  background: hsl(48 100% 42% / 0.22);
+}
+
+
+html[data-theme="nuro"] .drawer {
+  background: var(--panel);
+  box-shadow: -24px 0 60px rgba(0, 0, 0, 0.35);
+}
+
+
+html[data-theme="nuro"] .badge-ok {
+  border-color: var(--line);
+  background: hsl(152 81% 42% / 0.22);
+}
+
+
+html[data-theme="nuro"] .topbar-org {
+  color: var(--muted);
+}
+
+
+html[data-theme="nuro"] .topbar-org-mark {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.55);
+}
+
+
+html[data-theme="nuro"] .nav-collapse {
+  border: 1px solid rgba(64, 192, 208, 0.29);
+  background: var(--panel);
+  color: var(--muted);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+
+
+html[data-theme="nuro"] .nav-section-title {
+  color: var(--muted);
+}
+
+
+html[data-theme="nuro"] .nav-parent {
+  color: var(--text);
+}
+
+
+html[data-theme="nuro"] .nav-toggle a {
+  color: var(--text);
+}
+
+
+html[data-theme="nuro"] .nav-parent ~ a {
+  color: var(--muted);
+}
+
+
+html[data-theme="nuro"] .nav-icon {
+  color: var(--muted);
+}
+
+
+html[data-theme="nuro"] .nav-section-title .nav-icon {
+  color: var(--muted);
+}
+
+
+html[data-theme="nuro"] .session-detail-status {
+  color: var(--muted);
+}
+
+
+html[data-theme="nuro"] .session-detail-status.error {
+  color: hsl(4 76% 74%);
+}
+
+
+html[data-theme="nuro"] .session-back-link {
+  color: var(--text);
+}
+
+
+html[data-theme="nuro"] .session-overview-panel, html[data-theme="nuro"] .session-activity-panel {
+  border: 1px solid rgba(64, 192, 208, 0.22);
+  background: rgba(10, 14, 24, 0.98);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
+}
+
+
+html[data-theme="nuro"] .session-overview-head h2 {
+  color: var(--muted);
+}
+
+
+html[data-theme="nuro"] .session-badge-ok {
+  background: hsl(158 70% 42% / 0.22);
+  color: hsl(164 87% 74%);
+}
+
+
+html[data-theme="nuro"] .session-badge-risk {
+  background: hsl(352 100% 42% / 0.22);
+  color: hsl(345 83% 74%);
+}
+
+
+html[data-theme="nuro"] .session-badge-info {
+  background: hsl(204 79% 42% / 0.22);
+  color: hsl(201 96% 74%);
+}
+
+
+html[data-theme="nuro"] .session-id-line code {
+  color: var(--muted);
+}
+
+
+html[data-theme="nuro"] .session-copy-button, html[data-theme="nuro"] .session-prompt-head button {
+  border-color: rgba(64, 192, 208, 0.18);
+  background: var(--panel);
+  color: var(--muted);
+}
+
+
+html[data-theme="nuro"] .session-prompt-card {
+  border: 1px solid rgba(64, 192, 208, 0.18);
+  background: var(--panel);
+}
+
+
+html[data-theme="nuro"] .session-prompt-head {
+  color: var(--muted);
+}
+
+
+html[data-theme="nuro"] .session-prompt-card p {
+  color: var(--muted);
+}
+
+
+html[data-theme="nuro"] .session-prompt-dialog {
+  border: 1px solid rgba(64, 192, 208, 0.25);
+  background: var(--panel);
+  color: var(--muted);
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.6);
+}
+
+
+html[data-theme="nuro"] .session-prompt-dialog::backdrop {
+  background: rgba(64, 192, 208, 0.83);
+}
+
+
+html[data-theme="nuro"] .session-prompt-dialog-head {
+  border-bottom: 1px solid rgba(64, 192, 208, 0.18);
+}
+
+
+html[data-theme="nuro"] .session-metadata {
+  border-top: 1px solid rgba(64, 192, 208, 0.18);
+}
+
+
+html[data-theme="nuro"] .session-meta-item > span {
+  color: var(--muted);
+}
+
+
+html[data-theme="nuro"] .session-meta-item > strong {
+  color: var(--muted);
+}
+
+
+html[data-theme="nuro"] .session-device i {
+  background: var(--nue-turquoise);
+}
+
+
+html[data-theme="nuro"] .session-device i::after {
+  border: 1px solid var(--panel);
+}
+
+
+html[data-theme="nuro"] .session-meta-pill {
+  background: var(--panel-soft);
+  color: var(--muted);
+}
+
+
+html[data-theme="nuro"] .session-meta-harness small {
+  background: var(--panel-soft);
+  color: var(--muted);
+}
+
+
+html[data-theme="nuro"] .session-activity-head h2 {
+  color: var(--muted);
+}
+
+
+html[data-theme="nuro"] .session-activity-legend {
+  color: var(--muted);
+}
+
+
+html[data-theme="nuro"] .session-chart-y {
+  color: var(--muted);
+}
+
+
+html[data-theme="nuro"] .session-chart-grid {
+  border-bottom: 1px solid var(--line);
+}
+
+
+html[data-theme="nuro"] .session-chart-bar > div {
+  background: hsl(210 45% 42% / 0.22);
+}
+
+
+html[data-theme="nuro"] .session-chart-axis {
+  color: var(--muted);
+}
+
+
+html[data-theme="nuro"] .session-severity-breakdown h3 {
+  color: var(--muted);
+}
+
+
+html[data-theme="nuro"] .session-severity-row div {
+  color: var(--muted);
+}
+
+
+html[data-theme="nuro"] .session-severity-row div strong {
+  color: var(--text);
+}
+
+
+html[data-theme="nuro"] .session-severity-row > i {
+  background: hsl(210 45% 42% / 0.22);
+}
+
+
+html[data-theme="nuro"] .session-events-panel > .section-head h2 {
+  color: var(--text);
+}
+
+
+html[data-theme="nuro"] .session-internal-toggle {
+  border-color: rgba(64, 192, 208, 0.22);
+  background: var(--panel);
+  color: var(--muted);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+}
+
+
+html[data-theme="nuro"] .session-internal-toggle::before {
+  color: var(--muted);
+}
+
+
+html[data-theme="nuro"] .session-internal-toggle.active {
+  border-color: var(--line);
+  background: hsl(197 75% 42% / 0.22);
+  color: hsl(198 90% 74%);
+}
+
+
+html[data-theme="nuro"] .session-event-search .search-icon {
+  border: 1.5px solid var(--line);
+}
+
+
+html[data-theme="nuro"] .session-event-search input {
+  border-color: rgba(64, 192, 208, 0.22);
+  background: var(--panel);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.07);
+}
+
+
+html[data-theme="nuro"] .session-filter-row button {
+  background: var(--panel-soft);
+  color: var(--text);
+}
+
+
+html[data-theme="nuro"] .session-filter-row button:hover {
+  background: hsl(207 45% 42% / 0.22);
+}
+
+
+html[data-theme="nuro"] .session-filter-row button.active {
+  border-color: var(--line);
+  background: hsl(198 73% 42% / 0.22);
+  color: hsl(198 90% 74%);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.15);
+}
+
+
+html[data-theme="nuro"] .session-events-panel .table-wrap {
+  border-top: 1px solid rgba(64, 192, 208, 0.16);
+}
+
+
+html[data-theme="nuro"] body[data-page="session-detail"] .session-raw-table th {
+  background: hsl(220 45% 42% / 0.22);
+  color: var(--muted);
+}
+
+
+html[data-theme="nuro"] .session-event-id {
+  color: var(--muted);
+}
+
+
+html[data-theme="nuro"] .session-event-action strong {
+  color: var(--muted);
+}
+
+
+html[data-theme="nuro"] .session-event-action span {
+  color: var(--muted);
+}
+
+
+html[data-theme="nuro"] .session-event-value span {
+  color: var(--text);
+}
+
+
+html[data-theme="nuro"] .session-value-button {
+  color: var(--muted);
+}
+
+
+html[data-theme="nuro"] .session-value-button:hover {
+  color: hsl(198 90% 74%);
+}
+
+
+html[data-theme="nuro"] .session-severity-info {
+  background: hsl(158 51% 42% / 0.22);
+  color: hsl(166 87% 74%);
+}
+
+
+html[data-theme="nuro"] .session-severity-low {
+  background: hsl(197 69% 42% / 0.22);
+  color: hsl(193 82% 74%);
+}
+
+
+html[data-theme="nuro"] .session-severity-medium {
+  background: hsl(43 100% 42% / 0.22);
+  color: hsl(35 92% 74%);
+}
+
+
+html[data-theme="nuro"] .session-severity-high {
+  background: hsl(0 100% 42% / 0.22);
+  color: hsl(357 67% 74%);
+}
+
+
+html[data-theme="nuro"] .session-severity-critical {
+  background: hsl(341 71% 42% / 0.22);
+  color: hsl(343 80% 74%);
+}
+
+
+html[data-theme="nuro"] .session-type-prompt {
+  background: hsl(273 100% 42% / 0.22);
+  color: hsl(272 72% 74%);
+}
+
+
+html[data-theme="nuro"] .session-type-tool {
+  background: hsl(185 64% 42% / 0.22);
+  color: hsl(186 79% 74%);
+}
+
+
+html[data-theme="nuro"] .session-type-command {
+  background: hsl(22 100% 42% / 0.22);
+  color: hsl(17 88% 74%);
+}
+
+
+html[data-theme="nuro"] .session-type-file {
+  background: hsl(219 100% 42% / 0.22);
+  color: hsl(224 76% 74%);
+}
+
+
+html[data-theme="nuro"] .session-type-mcp {
+  background: hsl(256 100% 42% / 0.22);
+  color: hsl(263 70% 74%);
+}
+
+
+html[data-theme="nuro"] .session-type-approval {
+  background: hsl(42 100% 42% / 0.22);
+  color: hsl(26 90% 74%);
+}
+
+
+html[data-theme="nuro"] .session-type-session {
+  background: var(--panel-soft);
+  color: var(--muted);
+}
+
+
+html[data-theme="nuro"] .session-type-inventory, html[data-theme="nuro"] .session-type-validation, html[data-theme="nuro"] .session-type-metric {
+  background: hsl(210 45% 42% / 0.22);
+  color: var(--muted);
+}
+
+
+html[data-theme="nuro"] .session-json-button {
+  border-color: rgba(64, 192, 208, 0.22);
+  background: var(--panel);
+  color: var(--text);
+}
+
+
+html[data-theme="nuro"] .session-json-button:hover {
+  border-color: var(--line);
+  background: hsl(197 75% 42% / 0.22);
+  color: hsl(198 90% 74%);
+}
+
+
+html[data-theme="nuro"] body[data-page="session-detail"] .drawer pre {
+  background: var(--nue-turquoise);
+  color: hsl(211 55% 74%);
+}
+
+
+html[data-theme="nuro"] .range-pills span, html[data-theme="nuro"] .inventory-tabs a {
+  background: var(--panel);
+  color: var(--text);
+}
+
+
+html[data-theme="nuro"] .inventory-tabs {
+  background: rgba(10, 14, 24, 0.94);
+}
+
+
+html[data-theme="nuro"] .analytics-panel {
+  background: rgba(10, 14, 24, 0.98);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+}
+
+
+html[data-theme="nuro"] .stacked-chart {
+  background: repeating-linear-gradient(0deg, transparent 0 3.45rem, rgba(64, 192, 208, 0.14) 3.45rem calc(3.45rem + 1px)),
+    linear-gradient(180deg, rgba(15, 22, 36, 0.28), rgba(15, 22, 36, 0.7));
+}
+
+
+html[data-theme="nuro"] .stacked-chart-bar {
+  box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.3);
+}
+
+
+html[data-theme="nuro"] .stacked-chart-value {
+  color: var(--muted);
+}
+
+
+html[data-theme="nuro"] .attention-card {
+  background: hsl(210 45% 42% / 0.22);
+  color: var(--muted);
+}
+
+
+html[data-theme="nuro"] .attention-danger {
+  color: hsl(343 80% 74%);
+}
+
+
+html[data-theme="nuro"] .attention-warn {
+  color: hsl(23 82% 74%);
+}
+
+
+html[data-theme="nuro"] .attention-info {
+  color: hsl(193 82% 74%);
+}
+
+
+html[data-theme="nuro"] .empty-chart {
+  background: rgba(15, 22, 36, 0.7);
+}
+
+
+html[data-theme="nuro"] .throughput-track {
+  background: hsl(204 45% 42% / 0.22);
+}
+
+
+html[data-theme="nuro"] .token-donut > div {
+  background: var(--panel);
+}
+
+
+html[data-theme="nuro"] .token-donut span {
+  color: var(--muted);
+}
+
+
+html[data-theme="nuro"] .token-split-legend div {
+  color: var(--muted);
+}
+
+
+html[data-theme="nuro"] .token-split-legend em {
+  color: var(--muted);
+}
+
+
+html[data-theme="nuro"] .token-split-legend strong {
+  color: hsl(217 55% 74%);
+}
+
+
+html[data-theme="nuro"] .breakdown-list button {
+  color: var(--muted);
+}
+
+
+html[data-theme="nuro"] .breakdown-list small {
+  color: var(--muted);
+}
+
+
+html[data-theme="nuro"] .breakdown-list strong {
+  color: hsl(217 55% 74%);
+}
+
+
+html[data-theme="nuro"] .view-toggle {
+  background: hsl(213 45% 42% / 0.22);
+}
+
+
+html[data-theme="nuro"] .view-toggle button {
+  color: var(--text);
+}
+
+
+html[data-theme="nuro"] .view-toggle button.active {
+  background: var(--panel);
+}
+
+
+html[data-theme="nuro"] button, html[data-theme="nuro"] input, html[data-theme="nuro"] select {
+  background: var(--panel);
+}
+
+
+html[data-theme="nuro"] button:focus-visible, html[data-theme="nuro"] input:focus, html[data-theme="nuro"] select:focus {
+  box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.4);
+}
+
+
+html[data-theme="nuro"] .panel, html[data-theme="nuro"] .card {
+  background: rgba(10, 14, 24, 0.96);
+}
+
+
+html[data-theme="nuro"] body[data-page="sessions"] .search-panel, html[data-theme="nuro"] body[data-page="session-detail"] .search-panel {
+  border-color: rgba(64, 192, 208, 0.18);
+  background: rgba(10, 14, 24, 0.98);
+  box-shadow: 0 16px 42px rgba(0, 0, 0, 0.2), 0 1px 2px rgba(0, 0, 0, 0.15);
+}
+
+
+html[data-theme="nuro"] body[data-page="sessions"] .filter-section {
+  border: 1px solid rgba(64, 192, 208, 0.14);
+  background: var(--panel);
+}
+
+
+html[data-theme="nuro"] .session-filter-tabs {
+  border-bottom: 1px solid rgba(64, 192, 208, 0.14);
+}
+
+
+html[data-theme="nuro"] .session-filter-tabs button, html[data-theme="nuro"] body[data-page="sessions"] .quick-filters button {
+  background: var(--panel-soft);
+  color: var(--muted);
+}
+
+
+html[data-theme="nuro"] .session-filter-tabs button.active, html[data-theme="nuro"] body[data-page="sessions"] .quick-filters button.active {
+  background: var(--nue-turquoise);
+}
+
+
+html[data-theme="nuro"] body[data-page="sessions"] .quick-filters button, html[data-theme="nuro"] body[data-page="sessions"] .chip {
+  background: var(--panel-soft);
+  color: hsl(221 55% 74%);
+}
+
+
+html[data-theme="nuro"] .session-harness-logo {
+  background: var(--panel);
+  color: hsl(221 55% 74%);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+
+
+html[data-theme="nuro"] .session-harness-name {
+  color: hsl(221 55% 74%);
+}
+
+
+html[data-theme="nuro"] .session-list-prompt-model {
+  color: var(--muted);
+}
+
+
+html[data-theme="nuro"] .session-recurring-indicator {
+  background: hsl(226 100% 42% / 0.22);
+  color: hsl(245 58% 74%);
+}
+
+
+html[data-theme="nuro"] .session-activity-total {
+  color: var(--muted);
+}
+
+
+html[data-theme="nuro"] .session-activity-total strong {
+  color: hsl(221 55% 74%);
+}
+
+
+html[data-theme="nuro"] .session-activity-track {
+  background: var(--panel-soft);
+}
+
+
+html[data-theme="nuro"] .session-activity-tool {
+  background: #40c0d0;
+  fill: #40c0d0;
+}
+
+
+html[data-theme="nuro"] .session-activity-command {
+  background: #6b5bff;
+  fill: #6b5bff;
+}
+
+
+html[data-theme="nuro"] .session-activity-file {
+  background: #2fb39a;
+  fill: #2fb39a;
+}
+
+
+html[data-theme="nuro"] .session-activity-prompt {
+  background: #7aa7ff;
+  fill: #7aa7ff;
+}
+
+
+html[data-theme="nuro"] .session-activity-mcp {
+  background: #1a9a9a;
+  fill: #1a9a9a;
+}
+
+
+html[data-theme="nuro"] .session-activity-approval {
+  background: #f4c430;
+  fill: #f4c430;
+}
+
+
+html[data-theme="nuro"] .session-activity-other {
+  background: #e07b39;
+  fill: #e07b39;
+}
+
+
+html[data-theme="nuro"] .session-activity-detail {
+  color: var(--muted);
+}
+
+
+html[data-theme="nuro"] .capture-method-badge {
+  background: var(--panel-soft);
+  color: var(--muted);
+}
+
+
+html[data-theme="nuro"] button.card:hover {
+  background: var(--panel);
+}
+
+
+html[data-theme="nuro"] .quick-filters button, html[data-theme="nuro"] .chip, html[data-theme="nuro"] .badge, html[data-theme="nuro"] .pill {
+  background: var(--panel);
+  color: var(--text);
+}
+
+
+html[data-theme="nuro"] tbody tr:hover {
+  background: var(--panel-soft);
+}
+
+
+html[data-theme="nuro"] .inventory-controls {
+  background: rgba(10, 14, 24, 0.96);
+}
+
+
+html[data-theme="nuro"] .inventory-tabs button {
+  color: var(--text);
+}
+
+
+html[data-theme="nuro"] .inventory-table-panel th {
+  background: rgba(15, 22, 36, 0.7);
+}
+
+
+html[data-theme="nuro"] .inventory-runtime-logo {
+  background: var(--panel);
+  color: hsl(221 55% 74%);
+}
+
+
+html[data-theme="nuro"] .drawer-head {
+  background: var(--panel);
+}
+
+
+html[data-theme="nuro"] pre {
+  color: hsl(221 55% 74%);
+  background: var(--panel);
+}
+
+
+html[data-theme="nuro"] body.nav-collapsed .nav-toggle, html[data-theme="nuro"] .nav-toggle {
+  background: hsl(213 45% 42% / 0.22);
+}
+
+
+html[data-theme="nuro"] .lens-tab, html[data-theme="nuro"] .lens-add-button {
+  background: var(--panel-soft);
+  color: var(--text);
+}
+
+
+html[data-theme="nuro"] .lens-tab:hover, html[data-theme="nuro"] .lens-add-button:hover {
+  background: hsl(207 45% 42% / 0.22);
+}
+
+
+html[data-theme="nuro"] .lens-tab[aria-selected="true"] {
+  border-color: var(--line);
+  background: hsl(198 73% 42% / 0.22);
+  color: hsl(198 90% 74%);
+}
+
+
+html[data-theme="nuro"] .lens-view {
+  border: 1px solid rgba(64, 192, 208, 0.22);
+  background: rgba(10, 14, 24, 0.98);
+}
+
+
+html[data-theme="nuro"] .session-share-indicator {
+  color: var(--ok, hsl(145 55% 74%));
+}
+
+
+html[data-theme="nuro"] .session-share-indicator.session-share-stale {
+  color: var(--warn, hsl(34 100% 74%));
+}
+
+/* Tuned by hand: gradients and the data colors the generator leaves alone. */
+html[data-theme="nuro"] .card-danger {
+  background: linear-gradient(180deg, var(--panel) 0%, rgba(255, 107, 129, 0.08) 100%);
+}
+
+html[data-theme="nuro"] .card-warn {
+  background: linear-gradient(180deg, var(--panel) 0%, rgba(244, 196, 48, 0.08) 100%);
+}
+
+html[data-theme="nuro"] .throughput-track span,
+html[data-theme="nuro"] .throughput-track .throughput-input {
+  background: linear-gradient(90deg, var(--nue-turquoise), var(--nue-aqua));
+}
+
+html[data-theme="nuro"] .throughput-track .throughput-output {
+  background: linear-gradient(90deg, rgba(212, 165, 116, 0.45), var(--nue-gold));
+}
+
+html[data-theme="nuro"] .chart-legend i,
+html[data-theme="nuro"] .token-split-legend i,
+html[data-theme="nuro"] .breakdown-list i {
+  background: var(--nue-aqua);
+}
+
+html[data-theme="nuro"] .session-chart-grid {
+  background: repeating-linear-gradient(0deg, transparent 0 calc(50% - 1px), rgba(64, 192, 208, 0.12) calc(50% - 1px) 50%);
+  border-bottom-color: var(--line);
+}
+
+html[data-theme="nuro"] pre {
+  background: #060a12;
+  color: #d9e5f2;
+}
+
+/* Upstream centers the legend in the heading's grid cell; the wider monospace heading would run
+   under it, so the legend takes its own row. */
+html[data-theme="nuro"] .session-activity-legend {
+  grid-row: 2;
+  justify-self: start;
+  justify-content: flex-start;
+}
+
+/* Monospace runs wider than the upstream face; on a phone, let text wrap instead of pushing the
+   page sideways. */
+@media (max-width: 640px) {
+  html[data-theme="nuro"] body {
+    font-size: 0.88rem;
+    letter-spacing: 0;
+  }
+
+  html[data-theme="nuro"] .card,
+  html[data-theme="nuro"] .panel,
+  html[data-theme="nuro"] section,
+  html[data-theme="nuro"] header > div {
+    min-width: 0;
+  }
+
+  /* Wide tables scroll inside their panel rather than moving the page. */
+  html[data-theme="nuro"] table {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
+  }
+
+  html[data-theme="nuro"] p,
+  html[data-theme="nuro"] code,
+  html[data-theme="nuro"] strong,
+  html[data-theme="nuro"] h1,
+  html[data-theme="nuro"] h2,
+  html[data-theme="nuro"] .badge,
+  html[data-theme="nuro"] .pill {
+    overflow-wrap: anywhere;
+  }
+}
