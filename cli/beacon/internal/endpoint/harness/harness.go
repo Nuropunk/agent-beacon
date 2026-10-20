@@ -16,6 +16,7 @@ import (
 	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/endpoint/hooks"
 	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/endpoint/integrations/cowork"
 	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/hermessession"
+	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/localonly"
 	"gopkg.in/yaml.v3"
 )
 
@@ -405,6 +406,14 @@ func ConfigureClaude(opts ConfigureOptions) (string, error) {
 	env["OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE"] = "delta"
 	env["OTEL_EXPORTER_OTLP_PROTOCOL"] = "grpc"
 	env["OTEL_EXPORTER_OTLP_ENDPOINT"] = opts.Endpoint
+	// A per-signal endpoint outranks the generic one, so under the nuro edition's lock one left in
+	// settings would send prompts and tool details past the local collector. The CI path already
+	// drops them (internal/ci/harness.go).
+	if localonly.Enforced() {
+		delete(env, "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT")
+		delete(env, "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT")
+		delete(env, "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT")
+	}
 	// Tool details expose the command, file path, URL, search pattern, and MCP
 	// identity/arguments needed to reconstruct agent activity from OTel events.
 	env["OTEL_LOG_TOOL_DETAILS"] = "1"

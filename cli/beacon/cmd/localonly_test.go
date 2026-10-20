@@ -154,6 +154,13 @@ func TestLocalOnlyFlagRules(t *testing.T) {
 		{"ci exec", nil, false},
 		{"ci exec", map[string]string{"forward": "splunk"}, true},
 		{"ci start", map[string]string{"forward-endpoint": "https://hec.example"}, true},
+		{"endpoint integrations vscode setup", nil, false},
+		{"endpoint integrations vscode setup", map[string]string{"endpoint": "http://127.0.0.1:4318"}, false},
+		{"endpoint integrations vscode setup", map[string]string{"endpoint": "http://localhost:4318"}, false},
+		{"endpoint integrations vscode setup", map[string]string{"endpoint": "http://[::1]:4318"}, false},
+		{"endpoint integrations vscode setup", map[string]string{"endpoint": "http://192.0.2.10:4318"}, true},
+		{"endpoint integrations vscode setup", map[string]string{"endpoint": "https://otel.example.invalid"}, true},
+		{"endpoint integrations vscode setup", map[string]string{"endpoint": "127.0.0.1:4318"}, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.path+" "+flagsString(tc.flags), func(t *testing.T) {
@@ -173,6 +180,61 @@ func flagsString(flags map[string]string) string {
 		parts = append(parts, "--"+k+"="+v)
 	}
 	return strings.Join(parts, " ")
+}
+
+// Every command a check found sending data off the machine is named here, so deleting its rule
+// fails a test rather than quietly reopening the path.
+func TestLocalOnlyRefusesTheKnownEgressCommands(t *testing.T) {
+	lockNuroEdition(t)
+	for _, path := range []string{
+		"login", "share", "endpoint connect", "endpoint onboarding", "endpoint update",
+		"endpoint grok sync", "endpoint asymptote", "endpoint falcon", "endpoint s3", "cloud",
+		"mcp connect", "rules pull", "version check", "git notes push", "git hook pre-push",
+		"skills install", "memory skills install",
+	} {
+		c := firstRunnable(findCommand(t, path))
+		if c == nil {
+			t.Errorf("`beacon %s` has no runnable command", path)
+			continue
+		}
+		if err := preRun(c); !isRefusal(err) {
+			t.Errorf("`beacon %s` ran under the lock (pre-run returned %v)", commandPathBelowRoot(c), err)
+		}
+	}
+}
+
+// firstRunnable returns c, or its first runnable descendant when c only groups commands.
+func firstRunnable(c *cobra.Command) *cobra.Command {
+	if c.Runnable() {
+		return c
+	}
+	for _, child := range c.Commands() {
+		if r := firstRunnable(child); r != nil {
+			return r
+		}
+	}
+	return nil
+}
+
+func TestLoopbackDialAddrNeverResolvesLocalhost(t *testing.T) {
+	cases := []struct {
+		addr, want string
+		ok         bool
+	}{
+		{"localhost:4318", "127.0.0.1:4318", true},
+		{"LOCALHOST:80", "127.0.0.1:80", true},
+		{"127.0.0.1:4318", "127.0.0.1:4318", true},
+		{"[::1]:4318", "[::1]:4318", true},
+		{"10.99.0.1:80", "", false},
+		{"example.invalid:443", "", false},
+		{"localhost", "", false},
+	}
+	for _, tc := range cases {
+		got, ok := loopbackDialAddr(tc.addr)
+		if ok != tc.ok || (ok && got != tc.want) {
+			t.Errorf("loopbackDialAddr(%q) = %q, %v; want %q, %v", tc.addr, got, ok, tc.want, tc.ok)
+		}
+	}
 }
 
 // A community build keeps upstream's behavior: the guards are wired but refuse nothing.

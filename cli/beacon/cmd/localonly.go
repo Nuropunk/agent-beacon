@@ -5,6 +5,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -39,6 +40,9 @@ const (
 	whyAllHarnesses    = "'all' includes the held Grok engine; name the harnesses to configure instead"
 	whySkillsElsewhere = "it installs Beacon skills into ~/.agents/skills, which other vendors' agents read; " +
 		"the nuro edition ships its skills through the owner's Claude configuration instead"
+	whyRemoteOTLP  = "it points a runtime's telemetry, prompts and responses included, at an address off this machine"
+	whyTraceSkills = "it copies captured trace content, prompts included, into the project's .agents/skills, " +
+		"which other vendors' agents read and a commit would carry off the machine"
 )
 
 // localOnlyRules lists every command path that sends data off the machine, configures the held
@@ -76,6 +80,11 @@ var localOnlyRules = []localOnlyRule{
 	{path: "endpoint repair", why: whyForwardHEC, when: flagPrefixChanged("splunk-", "falcon-")},
 	{path: "endpoint hooks install", why: whyAllHarnesses, when: flagTrue("all")},
 	{path: "endpoint hooks install", why: whyHeldEngine, when: harnessFlagHeld("harness")},
+	{path: "endpoint integrations vscode setup", why: whyRemoteOTLP,
+		when: func(c *cobra.Command) bool {
+			e := flagValue(c, "endpoint")
+			return e != "" && !loopbackURL(e)
+		}},
 	{path: "endpoint integrations claude-cowork setup", why: "--ngrok opens a public tunnel to the local OTLP receiver", when: flagTrue("ngrok")},
 	{path: "cloud", why: "it pulls or uploads cloud-agent traces through Devin, GCS or S3"},
 	{path: "ci", why: whySendsOff, when: anyFlagChanged("forward", "forward-endpoint", "upload")},
@@ -96,12 +105,13 @@ var localOnlyRules = []localOnlyRule{
 			return a != "" && !claudeRuntime(a) && !flagTrue("print")(c)
 		}},
 	{path: "git notes push", why: whyHookBypass},
-	// Beacon's hook block runs this as `beacon git hook pre-push "$@" || true`, so a refusal never
-	// stops the person's own push; only Beacon's notes push is skipped.
+	// Beacon's pre-push hook script ignores this command's exit status and ends with `exit 0`, so a
+	// refusal never stops the person's own push; only Beacon's notes push is skipped.
 	{path: "git hook pre-push", why: whyHookBypass},
 	{path: "git setup", why: "it shares session links with remotes and beacon.sh on every git push",
 		when: func(c *cobra.Command) bool { return flagTrue("share-notes")(c) || flagTrue("share-sessions")(c) }},
 	{path: "skills install", why: whySkillsElsewhere},
+	{path: "memory skills install", why: whyTraceSkills},
 }
 
 // applyLocalOnly installs the nuro edition's lock on root. The command guards are always wired
@@ -311,21 +321,42 @@ func lockDefaultTransport() {
 	}
 	t.Proxy = nil
 	t.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
-		host, _, err := net.SplitHostPort(addr)
-		if err != nil {
-			host = addr
-		}
-		if !loopbackHost(host) {
+		target, ok := loopbackDialAddr(addr)
+		if !ok {
+			host, _, err := net.SplitHostPort(addr)
+			if err != nil {
+				host = addr
+			}
 			return nil, localonly.Refuse("A network connection to "+host, whySendsOff)
 		}
-		return dial(ctx, network, addr)
+		return dial(ctx, network, target)
 	}
 }
 
-func loopbackHost(host string) bool {
+// loopbackDialAddr returns the address to dial for addr when it is on this machine. "localhost" is
+// dialed as 127.0.0.1 rather than resolved, so a hosts file or DNS answer cannot point it elsewhere.
+func loopbackDialAddr(addr string) (string, bool) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return "", false
+	}
+	if strings.EqualFold(host, "localhost") {
+		return net.JoinHostPort("127.0.0.1", port), true
+	}
+	ip := net.ParseIP(host)
+	return addr, ip != nil && ip.IsLoopback()
+}
+
+// loopbackURL reports whether raw names a loopback IP address or localhost.
+func loopbackURL(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	host := u.Hostname()
 	if strings.EqualFold(host, "localhost") {
 		return true
 	}
-	ip := net.ParseIP(strings.Trim(host, "[]"))
+	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
 }

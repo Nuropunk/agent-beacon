@@ -3,6 +3,7 @@ package harness
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/localonly"
 	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/testenv"
 	"os"
 	"path/filepath"
@@ -122,6 +123,38 @@ func TestConfigureClaudeEnablesPromptLogging(t *testing.T) {
 	}
 	if got := settings["env"]["OTEL_LOG_USER_PROMPTS"]; got != "1" {
 		t.Fatalf("OTEL_LOG_USER_PROMPTS = %q, want 1; env=%#v", got, settings["env"])
+	}
+}
+
+// Under the lock, a per-signal endpoint left in settings would outrank the local collector for that
+// signal, so ConfigureClaude drops it; a community build leaves it, as upstream does.
+func TestConfigureClaudeDropsPerSignalEndpointsUnderTheLock(t *testing.T) {
+	for _, locked := range []bool{true, false} {
+		home := t.TempDir()
+		testenv.SetHome(t, home)
+		if locked {
+			t.Setenv(localonly.Env, "1")
+		} else {
+			t.Setenv(localonly.Env, "")
+		}
+		path := filepath.Join(home, ".claude", "settings.json")
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			t.Fatal(err)
+		}
+		seed := `{"env":{"OTEL_EXPORTER_OTLP_LOGS_ENDPOINT":"https://otel.example.invalid/v1/logs","OTEL_EXPORTER_OTLP_METRICS_ENDPOINT":"https://otel.example.invalid/v1/metrics","OTEL_EXPORTER_OTLP_TRACES_ENDPOINT":"https://otel.example.invalid/v1/traces"}}`
+		if err := os.WriteFile(path, []byte(seed), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ConfigureClaude(ConfigureOptions{Endpoint: "http://127.0.0.1:4317", UserMode: true}); err != nil {
+			t.Fatal(err)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := strings.Contains(string(data), "otel.example.invalid"); got == locked {
+			t.Fatalf("locked=%v: remote per-signal endpoint kept=%v in %s", locked, got, data)
+		}
 	}
 }
 
