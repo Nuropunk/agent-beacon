@@ -12,6 +12,7 @@ import (
 	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/account"
 	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/auth"
 	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/endpoint/asymptote"
+	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/localonly"
 	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/managedprivacy"
 	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/onboarding"
 	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/version"
@@ -44,6 +45,7 @@ const (
 	onboardingSkipOptedOut      = "opted_out"
 	onboardingSkipCI            = "ci"
 	onboardingSkipSystemInstall = "system_install"
+	onboardingSkipLocalOnly     = "local_only"
 )
 
 // Indirection points so the gate and the flow can be tested without a terminal, a
@@ -400,6 +402,9 @@ func onboardingSkipReason(profile onboarding.Profile) (string, bool) {
 		return onboardingSkipCompleted, true
 	case !onboardingEnabledByEnv():
 		return onboardingSkipOptedOut, true
+	// The nuro edition never signs in or offers Beacon Cloud: nothing leaves the machine.
+	case localonly.Enforced():
+		return onboardingSkipLocalOnly, true
 	// A system install is the MDM and package-postinstall path. It runs as root with
 	// no console user to ask, and blocking it would break fleet deployment.
 	case !endpointUserMode(), onboardingIsRoot():

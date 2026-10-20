@@ -7,9 +7,26 @@ import (
 
 	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/endpoint/hooks"
 	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/groksession"
+	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/localonly"
 )
 
 const GrokName = groksession.Harness
+
+// discoverGrokUnlessHeld is DiscoverGrok, except under the nuro edition's lock, where the Grok
+// engine is on hold: discovery then reports it without running its binary or reading its stores, so
+// an automatic install never selects it.
+func discoverGrokUnlessHeld() Harness {
+	if localonly.Enforced() {
+		return Harness{
+			Name:            GrokName,
+			DisplayName:     "Grok Build",
+			Capability:      "hooks+session_log",
+			TelemetryStatus: TelemetryDisabled,
+			Message:         "on hold in the nuro edition: not run, configured or synced",
+		}
+	}
+	return DiscoverGrok()
+}
 
 // DiscoverGrok reports whether Grok Build is present and which of its two collection paths is
 // carrying telemetry.

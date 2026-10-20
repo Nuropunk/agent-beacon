@@ -68,7 +68,7 @@ func DiscoverAll() []Harness {
 		DiscoverPi(),
 		DiscoverOmp(),
 		DiscoverOpenClaw(),
-		DiscoverGrok(),
+		discoverGrokUnlessHeld(),
 		DiscoverPrime(),
 		DiscoverOmo(),
 		DiscoverFx(),
