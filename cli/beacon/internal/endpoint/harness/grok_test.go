@@ -190,6 +190,7 @@ func TestDiscoverGrokWritesNothing(t *testing.T) {
 // Under the nuro edition's lock, discovery must not run the held engine's binary, even to ask its
 // version: the lock means Beacon never executes it.
 func TestDiscoverAllDoesNotRunGrokUnderTheLock(t *testing.T) {
+	testenv.RequirePOSIXExecutableFixtures(t)
 	grokHome(t)
 	bin := t.TempDir()
 	marker := filepath.Join(t.TempDir(), "ran")

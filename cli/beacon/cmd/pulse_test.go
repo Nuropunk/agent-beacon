@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/pulse"
+	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/testenv"
 )
 
 func runPulseWith(t *testing.T, opts pulseOptions) (string, pulse.Pulse) {
@@ -55,7 +56,7 @@ func TestPulseCommandWritesAPrivateFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0o600 {
+	if testenv.HasPOSIXFileModes() && info.Mode().Perm() != 0o600 {
 		t.Errorf("pulse file mode = %v, want 0600", info.Mode().Perm())
 	}
 	if p.Machine != "m4" || len(p.Harnesses) == 0 || p.Harnesses[0].Name != "claude_code" || p.Harnesses[0].Grade != pulse.GradeLive {
