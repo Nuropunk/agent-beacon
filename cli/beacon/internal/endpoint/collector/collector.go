@@ -12,6 +12,7 @@ import (
 
 	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/brewpath"
 	endpointconfig "github.com/asymptote-labs/agent-beacon/cli/beacon/internal/endpoint/config"
+	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/localonly"
 )
 
 const (
@@ -131,11 +132,15 @@ func WriteConfig(cfg endpointconfig.Config) error {
 func ConfigYAML(cfg endpointconfig.Config) string {
 	endpointconfig.NormalizeDestinations(&cfg)
 	exporterNames := []string{"beaconjson"}
-	splunkExporter := splunkHECYAML(cfg)
+	// Under the nuro edition's lock the collector writes the local log only: a Splunk or Falcon
+	// destination left in config.json by an earlier install is not rendered.
+	splunkExporter, falconExporter := "", ""
+	if !localonly.Enforced() {
+		splunkExporter, falconExporter = splunkHECYAML(cfg), falconHECYAML(cfg)
+	}
 	if splunkExporter != "" {
 		exporterNames = append(exporterNames, "splunk_hec")
 	}
-	falconExporter := falconHECYAML(cfg)
 	if falconExporter != "" {
 		exporterNames = append(exporterNames, "falcon_hec")
 	}

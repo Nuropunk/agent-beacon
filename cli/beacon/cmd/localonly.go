@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
 	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/endpoint/asymptote"
 	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/endpoint/edition"
@@ -31,6 +32,7 @@ const (
 	whySendsOff        = "it sends data off this machine"
 	whyBeaconCloud     = "it connects this machine to Beacon Cloud and forwards its traces"
 	whyForwardPack     = "it renders a pack that forwards the runtime log to a SIEM or bucket"
+	whyForwardHEC      = "the collector would forward the runtime log to Splunk or Falcon LogScale"
 	whyHeldEngine      = "the Grok engine is on hold, so Beacon neither runs nor configures it"
 	whyOtherVendors    = "it hands private traces to another vendor's agent"
 	whyHookBypass      = "it pushes with git push --no-verify, which skips the repository's hooks"
@@ -68,8 +70,10 @@ var localOnlyRules = []localOnlyRule{
 	{path: "endpoint install", why: whyBeaconCloud, when: flagTrue("connect")},
 	{path: "endpoint install", why: whyAllHarnesses, when: harnessFlagIs("harness", "all")},
 	{path: "endpoint install", why: whyHeldEngine, when: harnessFlagHeld("harness")},
+	{path: "endpoint install", why: whyForwardHEC, when: flagPrefixChanged("splunk-", "falcon-")},
 	{path: "endpoint repair", why: whyAllHarnesses, when: harnessFlagIs("harness", "all")},
 	{path: "endpoint repair", why: whyHeldEngine, when: harnessFlagHeld("harness")},
+	{path: "endpoint repair", why: whyForwardHEC, when: flagPrefixChanged("splunk-", "falcon-")},
 	{path: "endpoint hooks install", why: whyAllHarnesses, when: flagTrue("all")},
 	{path: "endpoint hooks install", why: whyHeldEngine, when: harnessFlagHeld("harness")},
 	{path: "endpoint integrations claude-cowork setup", why: "--ngrok opens a public tunnel to the local OTLP receiver", when: flagTrue("ngrok")},
@@ -92,6 +96,9 @@ var localOnlyRules = []localOnlyRule{
 			return a != "" && !claudeRuntime(a) && !flagTrue("print")(c)
 		}},
 	{path: "git notes push", why: whyHookBypass},
+	// Beacon's hook block runs this as `beacon git hook pre-push "$@" || true`, so a refusal never
+	// stops the person's own push; only Beacon's notes push is skipped.
+	{path: "git hook pre-push", why: whyHookBypass},
 	{path: "git setup", why: "it shares session links with remotes and beacon.sh on every git push",
 		when: func(c *cobra.Command) bool { return flagTrue("share-notes")(c) || flagTrue("share-sessions")(c) }},
 	{path: "skills install", why: whySkillsElsewhere},
@@ -242,6 +249,21 @@ func anyFlagChanged(names ...string) func(*cobra.Command) bool {
 			}
 		}
 		return false
+	}
+}
+
+// flagPrefixChanged reports whether any flag whose name starts with one of prefixes was set.
+func flagPrefixChanged(prefixes ...string) func(*cobra.Command) bool {
+	return func(c *cobra.Command) bool {
+		changed := false
+		c.Flags().Visit(func(f *pflag.Flag) {
+			for _, prefix := range prefixes {
+				if strings.HasPrefix(f.Name, prefix) {
+					changed = true
+				}
+			}
+		})
+		return changed
 	}
 }
 

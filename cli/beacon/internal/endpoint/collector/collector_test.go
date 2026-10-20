@@ -15,6 +15,7 @@ import (
 	"time"
 
 	endpointconfig "github.com/asymptote-labs/agent-beacon/cli/beacon/internal/endpoint/config"
+	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/localonly"
 )
 
 func testConfig(t *testing.T) endpointconfig.Config {
@@ -214,6 +215,25 @@ func TestConfigYAMLIncludesSplunkAndFalconHECWhenConfigured(t *testing.T) {
 	yaml := ConfigYAML(cfg)
 	if !strings.Contains(yaml, "exporters: [beaconjson, splunk_hec, falcon_hec]") {
 		t.Fatalf("ConfigYAML missing combined exporters:\n%s", yaml)
+	}
+}
+
+func TestConfigYAMLLeavesOutHECUnderTheLock(t *testing.T) {
+	t.Setenv(localonly.Env, "1")
+	cfg := testConfig(t)
+	cfg.Destinations = &endpointconfig.Destinations{
+		SplunkHEC: &endpointconfig.SplunkHEC{Endpoint: "https://splunk.example:8088/services/collector", Token: "hec-token"},
+		FalconHEC: &endpointconfig.FalconHEC{Endpoint: "https://cloud.us.humio.com/api/v1/ingest/hec", Token: "ingest-token"},
+	}
+
+	yaml := ConfigYAML(cfg)
+	if !strings.Contains(yaml, "exporters: [beaconjson]") {
+		t.Fatalf("ConfigYAML under the lock should export to beaconjson only:\n%s", yaml)
+	}
+	for _, leak := range []string{"splunk", "humio", "hec-token", "ingest-token"} {
+		if strings.Contains(yaml, leak) {
+			t.Fatalf("ConfigYAML under the lock contains %q:\n%s", leak, yaml)
+		}
 	}
 }
 
