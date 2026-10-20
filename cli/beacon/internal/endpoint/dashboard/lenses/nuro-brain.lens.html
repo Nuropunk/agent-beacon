@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Nuro Brain</title>
+<script type="application/beacon-lens+json">
+{
+  "id": "nuro-brain",
+  "title": "Nuro Brain",
+  "description": "Draws the trace as a brain: each kind of event is a region that lights only from this trace's real events, pathways show what followed what, and a raster shows when each region fired.",
+  "icon": "brain",
+  "version": 1,
+  "api": "beacon.lens.v1",
+  "author": "Beacon nuro edition"
+}
+</script>
+<style>
+  /* The host defines the --beacon-* tokens; the fallbacks keep the file readable on its own. */
+  body {
+    margin: 0;
+    color: var(--beacon-text, #111827);
+    font: 400 13px/1.5 var(--beacon-font-sans, ui-sans-serif, system-ui, sans-serif);
+  }
+  h2 { margin: 16px 0 6px; font-size: 13px; font-weight: 400; color: var(--beacon-muted, #6b7280); }
+  h2:first-child { margin-top: 0; }
+  p { margin: 0 0 8px; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--beacon-line, rgba(0,0,0,0.1)); font-weight: 400; }
+  th { color: var(--beacon-muted, #6b7280); }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .muted { color: var(--beacon-muted, #6b7280); }
+
+  .map {
+    position: relative;
+    aspect-ratio: 16 / 9;
+    border: 1px solid var(--beacon-line, rgba(0,0,0,0.1));
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .edge {
+    position: absolute;
+    height: 2px;
+    transform-origin: 0 50%;
+    background: var(--beacon-accent, #036aa2);
+    pointer-events: none;
+  }
+  .node {
+    position: absolute;
+    transform: translate(-50%, -50%);
+    border-radius: 50%;
+    border: 1px solid var(--beacon-accent, #036aa2);
+  }
+  .node.inferred { border-style: dashed; }
+  .node.error { border-color: var(--beacon-danger, #b91c1c); }
+  .node.quiet { border-color: var(--beacon-line, rgba(0,0,0,0.1)); background: transparent; }
+  .core {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    background: var(--beacon-accent, #036aa2);
+  }
+  .node.error .core { background: var(--beacon-danger, #b91c1c); }
+  .label {
+    position: absolute;
+    transform: translate(-50%, 0);
+    font-size: 11px;
+    line-height: 1.2;
+    white-space: nowrap;
+    text-align: center;
+  }
+  .label.quiet { color: var(--beacon-muted, #6b7280); }
+
+  .raster { display: grid; grid-template-columns: max-content 1fr; gap: 3px 8px; align-items: center; }
+  .raster .row { display: flex; height: 10px; background: var(--beacon-panel-soft, #f9fafb); border-radius: 2px; overflow: hidden; }
+  .raster .bin { flex: 1 1 0; min-width: 0; }
+  .raster .name { font-size: 11px; color: var(--beacon-muted, #6b7280); }
+  @media (max-width: 520px) {
+    .map { aspect-ratio: 4 / 3; }
+    .label { font-size: 10px; }
+  }
+  .span { display: flex; justify-content: space-between; font-size: 11px; color: var(--beacon-muted, #6b7280); margin-top: 4px; }
+</style>
+</head>
+<body>
+<p id="status" class="muted">Loading trace…</p>
+<main id="root" hidden></main>
+<script>
+(function () {
+  "use strict";
+  var root = document.getElementById("root");
+  var status = document.getElementById("status");
+  var fmt = Intl.NumberFormat();
+  var stamp = Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+
+  // Regions, placed on a brain-shaped ring around the tool core (x and y are percentages of the map).
+  var REGIONS = [
+    { id: "prompt", label: "Prompt", types: ["user_message"], x: 9, y: 46 },
+    { id: "reasoning", label: "Reasoning", types: ["agent_reasoning"], x: 21, y: 20 },
+    { id: "reply", label: "Reply", types: ["agent_message"], x: 21, y: 72 },
+    { id: "approval", label: "Approvals", types: ["approval"], x: 36, y: 12 },
+    { id: "session", label: "Session", types: ["session"], x: 36, y: 80 },
+    { id: "tools", label: "Tools", types: ["tool_call", "tool_result"], x: 50, y: 46 },
+    { id: "command", label: "Commands", types: ["command"], x: 64, y: 12 },
+    { id: "error", label: "Errors", types: ["error"], x: 64, y: 80 },
+    { id: "file", label: "Files", types: ["file"], x: 78, y: 20 },
+    { id: "mcp", label: "MCP", types: ["mcp"], x: 78, y: 72 },
+    { id: "tokens", label: "Tokens", types: ["token_usage"], x: 91, y: 34 },
+    { id: "other", label: "Other", types: ["other"], x: 91, y: 60 }
+  ];
+  var regionOfType = {};
+  REGIONS.forEach(function (r) { r.types.forEach(function (t) { regionOfType[t] = r; }); });
+  var BINS = 96;
+  var INFERRED_WEIGHT = 0.35; // an inferred event lights a region at about a third of an observed one
+
+  // Every element is built with textContent: trace content is untrusted and never parsed as HTML.
+  function el(tag, text, className) {
+    var node = document.createElement(tag);
+    if (text !== undefined && text !== null) node.textContent = String(text);
+    if (className) node.className = className;
+    return node;
+  }
+  function table(headers, rows) {
+    var t = el("table");
+    var head = t.appendChild(el("tr"));
+    headers.forEach(function (h) { head.appendChild(el("th", h.label, h.num ? "num" : "")); });
+    rows.forEach(function (cells) {
+      var tr = t.appendChild(el("tr"));
+      cells.forEach(function (cell) { tr.appendChild(cell); });
+    });
+    return t;
+  }
+
+  function tally(events) {
+    var stats = {};
+    REGIONS.forEach(function (r) { stats[r.id] = { region: r, events: 0, observed: 0, inferred: 0, times: [] }; });
+    var ordered = events.filter(function (e) { return e && regionOfType[e.type]; }).slice().sort(function (a, b) {
+      return (a.number || 0) - (b.number || 0);
+    });
+    var paths = {};
+    var previous = null;
+    ordered.forEach(function (e) {
+      var region = regionOfType[e.type];
+      var s = stats[region.id];
+      s.events++;
+      if (e.fidelity === "observed") s.observed++;
+      if (e.fidelity === "inferred") s.inferred++;
+      var ms = Date.parse(e.timestamp);
+      if (!isNaN(ms)) s.times.push({ ms: ms, inferred: e.fidelity === "inferred" });
+      if (previous && previous !== region) {
+        var key = previous.id + ">" + region.id;
+        paths[key] = (paths[key] || 0) + 1;
+      }
+      previous = region;
+    });
+    return { stats: stats, paths: paths, known: ordered.length };
+  }
+
+  // A region's light: inferred events count at INFERRED_WEIGHT, so a region Beacon only inferred stays dim.
+  function light(s) { return s.events - s.inferred + s.inferred * INFERRED_WEIGHT; }
+
+  function drawMap(t) {
+    var map = el("div", null, "map");
+    var maxLight = 0;
+    REGIONS.forEach(function (r) { maxLight = Math.max(maxLight, light(t.stats[r.id])); });
+
+    // Pathways first, so the regions sit on top of them. Both directions share one line.
+    var undirected = {};
+    Object.keys(t.paths).forEach(function (key) {
+      var ends = key.split(">").sort();
+      var k = ends.join(">");
+      undirected[k] = (undirected[k] || 0) + t.paths[key];
+    });
+    var maxPath = 0;
+    Object.keys(undirected).forEach(function (k) { maxPath = Math.max(maxPath, undirected[k]); });
+    var edges = Object.keys(undirected).map(function (k) {
+      var ends = k.split(">");
+      var line = el("div", null, "edge");
+      line.style.opacity = String(0.15 + 0.6 * (undirected[k] / maxPath));
+      map.appendChild(line);
+      return { line: line, a: byId(ends[0]), b: byId(ends[1]) };
+    });
+
+    REGIONS.forEach(function (r) {
+      var s = t.stats[r.id];
+      var share = maxLight > 0 ? light(s) / maxLight : 0;
+      var mostlyInferred = s.inferred > 0 && s.inferred * 2 >= s.events;
+      var node = el("div", null, "node" + (s.events === 0 ? " quiet" : "") + (r.id === "error" ? " error" : "") + (mostlyInferred ? " inferred" : ""));
+      var size = s.events === 0 ? 14 : Math.round(16 + 26 * Math.sqrt(share));
+      node.style.width = size + "px";
+      node.style.height = size + "px";
+      node.style.left = r.x + "%";
+      node.style.top = r.y + "%";
+      node.title = r.label + ": " + fmt.format(s.events) + (s.inferred ? " (" + fmt.format(s.inferred) + " inferred)" : "");
+      if (s.events > 0) {
+        var core = node.appendChild(el("div", null, "core"));
+        core.style.opacity = String(0.25 + 0.75 * Math.sqrt(share));
+      }
+      map.appendChild(node);
+      var label = el("div", r.label + (s.events ? " " + fmt.format(s.events) : ""), "label" + (s.events === 0 ? " quiet" : ""));
+      label.style.left = r.x + "%";
+      label.style.top = "calc(" + r.y + "% + " + (size / 2 + 3) + "px)";
+      map.appendChild(label);
+    });
+
+    // Lines are laid out in pixels, so they follow the map's real width; redo them when it changes.
+    function layout() {
+      var w = map.clientWidth;
+      var h = map.clientHeight;
+      edges.forEach(function (e) {
+        var x1 = e.a.x / 100 * w, y1 = e.a.y / 100 * h;
+        var x2 = e.b.x / 100 * w, y2 = e.b.y / 100 * h;
+        var dx = x2 - x1, dy = y2 - y1;
+        e.line.style.left = x1 + "px";
+        e.line.style.top = (y1 - 1) + "px";
+        e.line.style.width = Math.sqrt(dx * dx + dy * dy) + "px";
+        e.line.style.transform = "rotate(" + Math.atan2(dy, dx) + "rad)";
+      });
+    }
+    return { node: map, layout: layout };
+  }
+
+  function byId(id) {
+    for (var i = 0; i < REGIONS.length; i++) if (REGIONS[i].id === id) return REGIONS[i];
+    return null;
+  }
+
+  function drawRaster(t) {
+    var first = Infinity, last = -Infinity;
+    REGIONS.forEach(function (r) {
+      t.stats[r.id].times.forEach(function (p) { first = Math.min(first, p.ms); last = Math.max(last, p.ms); });
+    });
+    if (first === Infinity) return null;
+    var span = last - first;
+    var wrap = el("div");
+    var grid = wrap.appendChild(el("div", null, "raster"));
+    REGIONS.forEach(function (r) {
+      var s = t.stats[r.id];
+      if (s.times.length === 0) return;
+      var bins = [];
+      for (var i = 0; i < BINS; i++) bins.push(0);
+      s.times.forEach(function (p) {
+        var i = span > 0 ? Math.min(BINS - 1, Math.floor((p.ms - first) / span * BINS)) : BINS - 1;
+        bins[i] += p.inferred ? INFERRED_WEIGHT : 1;
+      });
+      var peak = Math.max.apply(null, bins);
+      grid.appendChild(el("div", r.label, "name"));
+      var row = grid.appendChild(el("div", null, "row"));
+      bins.forEach(function (v) {
+        var bin = row.appendChild(el("div", null, "bin"));
+        if (v > 0) {
+          bin.style.background = r.id === "error" ? "var(--beacon-danger, #b91c1c)" : "var(--beacon-accent, #036aa2)";
+          bin.style.opacity = String(0.25 + 0.75 * (v / peak));
+        }
+      });
+    });
+    var times = wrap.appendChild(el("div", null, "span"));
+    times.appendChild(el("span", stamp.format(first)));
+    times.appendChild(el("span", span > 0 ? duration(span) : "one instant"));
+    times.appendChild(el("span", stamp.format(last)));
+    return wrap;
+  }
+
+  function duration(ms) {
+    var s = Math.round(ms / 1000);
+    if (s < 60) return s + " s";
+    var m = Math.round(s / 60);
+    if (m < 60) return m + " min";
+    var h = Math.floor(m / 60);
+    return h + " h " + (m % 60) + " min";
+  }
+
+  function render(data) {
+    var trace = (data && data.trace) || {};
+    var events = Array.isArray(trace.events) ? trace.events : [];
+    var t = tally(events);
+
+    if (t.known === 0) {
+      root.appendChild(el("p", "Quiet. This trace has no agent activity, so no region fires.", "muted"));
+    } else {
+      root.appendChild(el("p", "Each region lights only from this trace's events: the more events, the brighter. " +
+        "Events Beacon inferred rather than observed glow dim, and a dashed ring marks a region that is mostly inferred. " +
+        "Nothing here moves on its own.", "muted"));
+    }
+    var map = drawMap(t);
+    root.appendChild(map.node);
+
+    var raster = drawRaster(t);
+    if (raster) {
+      root.appendChild(el("h2", "When each region fired"));
+      root.appendChild(raster);
+    }
+
+    var rows = REGIONS.filter(function (r) { return t.stats[r.id].events > 0; }).map(function (r) {
+      var s = t.stats[r.id];
+      return [el("td", r.label), el("td", fmt.format(s.events), "num"), el("td", fmt.format(s.observed), "num"), el("td", fmt.format(s.inferred), "num")];
+    });
+    if (rows.length) {
+      root.appendChild(el("h2", "Regions"));
+      root.appendChild(table([{ label: "Region" }, { label: "Events", num: true }, { label: "Observed", num: true }, { label: "Inferred", num: true }], rows));
+    }
+
+    var paths = Object.keys(t.paths).map(function (k) { return { key: k, n: t.paths[k] }; }).sort(function (a, b) {
+      return b.n - a.n || (a.key < b.key ? -1 : 1);
+    }).slice(0, 8);
+    if (paths.length) {
+      root.appendChild(el("h2", "Strongest pathways"));
+      root.appendChild(table([{ label: "From" }, { label: "Then" }, { label: "Times", num: true }], paths.map(function (p) {
+        var ends = p.key.split(">");
+        return [el("td", byId(ends[0]).label), el("td", byId(ends[1]).label), el("td", fmt.format(p.n), "num")];
+      })));
+    }
+
+    if (data && data.truncated) {
+      root.appendChild(el("p", "Showing " + fmt.format(events.length) + " of " + fmt.format((trace.range && trace.range.total_events) || events.length) + " events.", "muted"));
+    }
+    status.hidden = true;
+    root.hidden = false;
+    map.layout();
+    window.addEventListener("resize", map.layout);
+  }
+
+  window.beacon.getTrace().then(render, function (err) {
+    status.textContent = "Could not load this trace: " + ((err && err.message) || err);
+  });
+})();
+</script>
+</body>
+</html>
