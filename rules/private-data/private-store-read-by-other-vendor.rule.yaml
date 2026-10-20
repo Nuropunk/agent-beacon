@@ -1,0 +1,63 @@
+id: private-store-read-by-other-vendor
+version: 1
+title: A non-Claude agent read a private trace or diary store
+description: >
+  An agent other than Claude Code read a store that holds private material:
+  Beacon's own runtime logs and handoff briefs (full prompts and command
+  output), Claude Code session transcripts, a diary folder, or an
+  age-encrypted archive. For an owner who keeps private work with one model
+  vendor, any other vendor's agent opening these is a leak to review. Claude
+  Code reading them is expected and excluded.
+severity: high
+status: experimental
+posture: detect
+taxonomy:
+  beacon_category: private-data
+
+match: >
+  !e.harness.name.matches("(?i)^claude") && (
+    (e.event.action == "file.read" &&
+      e.file.path.matches("(?i)(\\.beacon/endpoint/(logs|handoffs)/|\\.claude/projects/|/diar(y|ies)/|\\.age$)")) ||
+    (e.event.action == "command.executed" &&
+      e.command.command.matches("(?i)(^|[;&|]\\s*)(cat|less|more|head|tail|cp|tar|zip|rg|grep|jq|sqlite3)\\b[^;&|]*(\\.beacon/endpoint/(logs|handoffs)|\\.claude/projects|/diar(y|ies)/)"))
+  )
+
+emit:
+  reason: "A non-Claude agent read a private trace, transcript or diary store"
+
+tests:
+  - name: codex_reads_beacon_log
+    verdict: match
+    events:
+      - event: { action: file.read }
+        harness: { name: codex_cli }
+        file: { path: "/Users/u/.beacon/endpoint/logs/runtime.jsonl" }
+        session: { id: s1 }
+  - name: cursor_reads_claude_transcript
+    verdict: match
+    events:
+      - event: { action: file.read }
+        harness: { name: cursor }
+        file: { path: "/Users/u/.claude/projects/-Users-u-dev/abc.jsonl" }
+        session: { id: s1 }
+  - name: gemini_greps_diary
+    verdict: match
+    events:
+      - event: { action: command.executed }
+        harness: { name: gemini_cli }
+        command: { command: "rg -i plan ~/notes/diary/" }
+        session: { id: s1 }
+  - name: claude_reads_its_own_transcript
+    verdict: no_match
+    events:
+      - event: { action: file.read }
+        harness: { name: claude_code }
+        file: { path: "/Users/u/.claude/projects/-Users-u-dev/abc.jsonl" }
+        session: { id: s1 }
+  - name: codex_reads_project_file
+    verdict: no_match
+    events:
+      - event: { action: file.read }
+        harness: { name: codex_cli }
+        file: { path: "/Users/u/dev/app/README.md" }
+        session: { id: s1 }

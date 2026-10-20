@@ -1,0 +1,78 @@
+id: hook-bypass
+version: 1
+title: Agent bypassed hooks or permission prompts
+description: >
+  An agent ran a command that skips the repository's or the runtime's own
+  checks: git commit or push with --no-verify (or commit -n), HUSKY=0,
+  Claude Code with --dangerously-skip-permissions, or a settings edit that
+  turns every hook off (disableAllHooks). Hooks are where privacy and gate
+  checks live, so a bypass removes them for that step.
+severity: high
+status: experimental
+posture: detect
+taxonomy:
+  beacon_category: private-data
+
+match: >
+  (e.event.action == "command.executed" && (
+    e.command.command.matches("(?i)(^|[;&|]\\s*)git\\b[^;&|]*\\b(commit|push|merge|am|rebase)\\b[^;&|]*\\s--no-verify\\b") ||
+    e.command.command.matches("(?i)(^|[;&|]\\s*)git\\b[^;&|]*\\bcommit\\b[^;&|]*\\s-[a-zA-Z]*n[a-zA-Z]*(\\s|$)") ||
+    e.command.command.matches("(?i)(^|[;&|\\s])HUSKY=0\\b") ||
+    e.command.command.matches("(?i)\\s--dangerously-skip-permissions\\b") ||
+    e.command.command.matches("(?i)disableAllHooks\\W+true")
+  )) ||
+  (e.event.action == "file.edited" && e.file.path.matches("(?i)\\.claude/settings(\\.local)?\\.json$") &&
+    e.file.diff.matches("(?i)\\+.*disableAllHooks\\W+true"))
+
+emit:
+  reason: "An agent skipped hooks or permission prompts"
+
+tests:
+  - name: commit_no_verify
+    verdict: match
+    events:
+      - event: { action: command.executed }
+        command: { command: "git commit --no-verify -m 'wip'" }
+        session: { id: s1 }
+  - name: commit_dash_n
+    verdict: match
+    events:
+      - event: { action: command.executed }
+        command: { command: "git commit -nm 'wip'" }
+        session: { id: s1 }
+  - name: push_no_verify
+    verdict: match
+    events:
+      - event: { action: command.executed }
+        command: { command: "git push --no-verify origin feature" }
+        session: { id: s1 }
+  - name: husky_off
+    verdict: match
+    events:
+      - event: { action: command.executed }
+        command: { command: "HUSKY=0 git commit -m 'skip'" }
+        session: { id: s1 }
+  - name: skip_permissions
+    verdict: match
+    events:
+      - event: { action: command.executed }
+        command: { command: "claude -p 'fix it' --dangerously-skip-permissions" }
+        session: { id: s1 }
+  - name: settings_disable_hooks
+    verdict: match
+    events:
+      - event: { action: file.edited }
+        file: { path: "/home/u/.claude/settings.json", diff: "+  \"disableAllHooks\": true," }
+        session: { id: s1 }
+  - name: push_dry_run_is_not_commit_n
+    verdict: no_match
+    events:
+      - event: { action: command.executed }
+        command: { command: "git push -n origin feature" }
+        session: { id: s1 }
+  - name: ordinary_commit
+    verdict: no_match
+    events:
+      - event: { action: command.executed }
+        command: { command: "git commit -m 'add tests'" }
+        session: { id: s1 }

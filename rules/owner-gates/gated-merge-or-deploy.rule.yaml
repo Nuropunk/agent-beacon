@@ -1,0 +1,83 @@
+id: gated-merge-or-deploy
+version: 1
+title: Agent merged, published or deployed
+description: >
+  An agent ran a command that merges a pull request, pushes straight to a
+  main or master branch, publishes a package, or deploys to production. For
+  an owner who keeps these steps for themselves, any of them run by an agent
+  is worth a look, approved or not. The rule audits; blocking belongs in a
+  PreToolUse hook. Dry runs and previews are excluded.
+severity: medium
+status: experimental
+posture: detect
+taxonomy:
+  beacon_category: owner-gates
+
+match: >
+  e.event.action == "command.executed" &&
+  !e.command.command.matches("(?i)(\\s--dry-run\\b|\\s-n\\b.*\\bpush\\b|\\bpush\\b.*\\s-n\\b)") && (
+    e.command.command.matches("(?i)(^|[;&|]\\s*)gh\\s+pr\\s+merge\\b") ||
+    e.command.command.matches("(?i)(^|[;&|]\\s*)git\\b[^;&|]*\\bpush\\b[^;&|]*(\\s|:)(main|master)\\b") ||
+    e.command.command.matches("(?i)(^|[;&|]\\s*)(npm|pnpm|yarn|cargo|gem|twine)\\b[^;&|]*\\bpublish\\b") ||
+    e.command.command.matches("(?i)(^|[;&|]\\s*)(vercel|netlify)\\b[^;&|]*\\s--prod\\b") ||
+    e.command.command.matches("(?i)(^|[;&|]\\s*)(fly|flyctl)\\s+deploy\\b")
+  )
+
+emit:
+  reason: "An agent merged, pushed to main, published or deployed"
+
+tests:
+  - name: gh_pr_merge
+    verdict: match
+    events:
+      - event: { action: command.executed }
+        command: { command: "gh pr merge 42 --squash" }
+        session: { id: s1 }
+  - name: push_to_main
+    verdict: match
+    events:
+      - event: { action: command.executed }
+        command: { command: "git push origin main" }
+        session: { id: s1 }
+  - name: push_head_to_main
+    verdict: match
+    events:
+      - event: { action: command.executed }
+        command: { command: "git push origin HEAD:main" }
+        session: { id: s1 }
+  - name: npm_publish
+    verdict: match
+    events:
+      - event: { action: command.executed }
+        command: { command: "npm publish --access public" }
+        session: { id: s1 }
+  - name: vercel_prod
+    verdict: match
+    events:
+      - event: { action: command.executed }
+        command: { command: "vercel deploy --prod" }
+        session: { id: s1 }
+  - name: push_feature_branch
+    verdict: no_match
+    events:
+      - event: { action: command.executed }
+        command: { command: "git push -u origin claude/feature-x" }
+        session: { id: s1 }
+  - name: push_branch_named_like_main
+    verdict: no_match
+    events:
+      - event: { action: command.executed }
+        command: { command: "git push origin mainline-fixes" }
+        session: { id: s1 }
+  - name: publish_dry_run
+    verdict: no_match
+    events:
+      - event: { action: command.executed }
+        command: { command: "npm publish --dry-run" }
+        session: { id: s1 }
+  - name: echo_mention
+    verdict: no_match
+    events:
+      - event: { action: command.executed }
+        command: { command: "echo 'remember to gh pr merge later' > notes.md" }
+        session: { id: s1 }
