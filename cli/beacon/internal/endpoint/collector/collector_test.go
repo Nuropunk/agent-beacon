@@ -237,6 +237,45 @@ func TestConfigYAMLLeavesOutHECUnderTheLock(t *testing.T) {
 	}
 }
 
+// A rollback under the lock starts a collector only on a config that exports to the local log alone.
+func TestExportsLocallyOnly(t *testing.T) {
+	t.Setenv(localonly.Env, "")
+	dir := t.TempDir()
+	write := func(name, body string) string {
+		t.Helper()
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	forwarding := testConfig(t)
+	forwarding.Destinations = &endpointconfig.Destinations{SplunkHEC: &endpointconfig.SplunkHEC{
+		Endpoint: "https://splunk.example:8088/services/collector",
+		Token:    "hec-token",
+	}}
+	earlier := ConfigYAML(forwarding)
+	if !strings.Contains(earlier, "splunk_hec:") {
+		t.Fatalf("fixture should render a Splunk exporter:\n%s", earlier)
+	}
+	for name, tc := range map[string]struct {
+		path string
+		want bool
+	}{
+		"local log only":                     {write("local.yaml", ConfigYAML(testConfig(t))), true},
+		"an earlier build's Splunk exporter": {write("splunk.yaml", earlier), false},
+		"any other exporter":                 {write("otlp.yaml", "exporters:\n  beaconjson: {}\n  otlphttp:\n    endpoint: https://otel.example.invalid\n"), false},
+		"unparseable":                        {write("bad.yaml", "exporters: [\n"), false},
+		"missing":                            {filepath.Join(dir, "missing.yaml"), false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := ExportsLocallyOnly(tc.path); got != tc.want {
+				t.Fatalf("ExportsLocallyOnly = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestWriteConfigCreatesConfigAndSpoolDirectory(t *testing.T) {
 	cfg := testConfig(t)
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/localonly"
 	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/testenv"
+	"github.com/pelletier/go-toml/v2"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -34,6 +35,41 @@ func TestMergeCodexOTELReplacesExistingBlock(t *testing.T) {
 	}
 	if !strings.Contains(got, "[profile]\nname = \"default\"") {
 		t.Fatalf("following section was not preserved: %s", got)
+	}
+}
+
+// TOML allows whitespace, quoted keys and a comment in a table header. Each spelling of an old
+// otel table is replaced, so no remote exporter survives and Codex never sees [otel] twice; a
+// user's metrics opt-out is written back.
+func TestMergeCodexOTELReplacesEverySpellingOfTheOldTables(t *testing.T) {
+	for name, input := range map[string]string{
+		"spaces in the header":   "[ otel.metrics_exporter.\"otlp-http\" ]\nendpoint = \"https://metrics.example.invalid/v1/metrics\"\n",
+		"spaces around the dots": "[otel . exporter . \"otlp-http\"]\nendpoint = \"https://logs.example.invalid/v1/logs\"\n",
+		"a quoted first key":     "[\"otel\".trace_exporter.\"otlp-http\"]\nendpoint = \"https://traces.example.invalid/v1/traces\"\n",
+		"a comment after it":     "[otel] # telemetry\nexporter = \"otlp-http\"\n\n[otel.exporter.\"otlp-http\"] # old\nendpoint = \"https://logs.example.invalid/v1/logs\"\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := mergeCodexOTEL("model = \"gpt-5\"\n\n"+input+"\n[ profile ]\nname = \"default\"\n", "http://127.0.0.1:4317")
+			if strings.Contains(got, "example.invalid") {
+				t.Fatalf("a remote exporter survived:\n%s", got)
+			}
+			var parsed map[string]any
+			if err := toml.Unmarshal([]byte(got), &parsed); err != nil {
+				t.Fatalf("merged config is not valid TOML (%v):\n%s", err, got)
+			}
+			if !strings.Contains(got, "[ profile ]\nname = \"default\"") || !strings.Contains(got, "model = \"gpt-5\"") {
+				t.Fatalf("other settings were not kept:\n%s", got)
+			}
+		})
+	}
+	got := mergeCodexOTEL("[otel]\nmetrics_exporter = \"none\" # no usage metrics\n", "http://127.0.0.1:4317")
+	var parsed struct {
+		OTEL struct {
+			MetricsExporter string `toml:"metrics_exporter"`
+		} `toml:"otel"`
+	}
+	if err := toml.Unmarshal([]byte(got), &parsed); err != nil || parsed.OTEL.MetricsExporter != "none" {
+		t.Fatalf("metrics opt-out was dropped (%v):\n%s", err, got)
 	}
 }
 

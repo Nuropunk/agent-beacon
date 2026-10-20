@@ -23,6 +23,7 @@ import (
 	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/endpoint/sysacl"
 	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/endpoint/writer"
 	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/hermessession"
+	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/localonly"
 	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/version"
 )
 
@@ -452,8 +453,11 @@ type installRollback struct {
 	// it, and on systemd the disable survives reboot, so a machine that was collecting fine before
 	// the attempt is left collecting nothing afterwards.
 	ServiceWasRunning bool
-	files             []string
-	snapshots         map[string]fileSnapshot
+	// CollectorConfigPath is the collector config the restored service reads. Under the nuro
+	// edition's lock the service is brought back only if that config exports locally alone.
+	CollectorConfigPath string
+	files               []string
+	snapshots           map[string]fileSnapshot
 }
 
 func newInstallRollback(manager service.Manager) *installRollback {
@@ -512,7 +516,10 @@ func (r *installRollback) Rollback(manifest Manifest) {
 	//
 	// Best-effort. If it does not come back, the endpoint is no worse off than the failure that
 	// brought us here, and the install error the caller receives is the more useful signal.
-	if r.ServiceLoaded && r.ServiceWasRunning {
+	//
+	// Under the nuro edition's lock the restored config may be an earlier build's, forwarding to
+	// Splunk or Falcon; the collector then stays stopped rather than send the log off the machine.
+	if r.ServiceLoaded && r.ServiceWasRunning && (!localonly.Enforced() || endpointcollector.ExportsLocallyOnly(r.CollectorConfigPath)) {
 		_ = r.Manager.Load()
 	}
 	// Same claim for the inventory job: its unit file has just been restored to what was scheduled
@@ -575,6 +582,7 @@ func Install(opts InstallOptions) (InstallResult, error) {
 
 	tx := newInstallRollback(manager)
 	tx.Track(cfg.Collector.ConfigPath)
+	tx.CollectorConfigPath = cfg.Collector.ConfigPath
 	manifest.Files = append(manifest.Files, cfg.Collector.ConfigPath)
 	if err := writeCollectorConfig(cfg); err != nil {
 		tx.Rollback(manifest)

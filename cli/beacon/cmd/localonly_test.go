@@ -6,16 +6,23 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/endpoint/asymptote"
+	endpointconfig "github.com/asymptote-labs/agent-beacon/cli/beacon/internal/endpoint/config"
 	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/endpoint/edition"
+	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/endpoint/lifecycle"
+	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/endpoint/service"
 	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/handoff"
 	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/localonly"
 	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/onboarding"
+	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/testenv"
 	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/updatecheck"
 	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/version"
 )
@@ -182,15 +189,18 @@ func flagsString(flags map[string]string) string {
 	return strings.Join(parts, " ")
 }
 
-// Every command a check found sending data off the machine is named here, so deleting its rule
+// Every unconditional rule's command is named here, not read from the table, so deleting a rule
 // fails a test rather than quietly reopening the path.
 func TestLocalOnlyRefusesTheKnownEgressCommands(t *testing.T) {
 	lockNuroEdition(t)
 	for _, path := range []string{
-		"login", "share", "endpoint connect", "endpoint onboarding", "endpoint update",
-		"endpoint grok sync", "endpoint asymptote", "endpoint falcon", "endpoint s3", "cloud",
-		"mcp connect", "rules pull", "version check", "git notes push", "git hook pre-push",
-		"skills install", "memory skills install",
+		"login", "logout", "share", "endpoint connect", "endpoint onboarding", "endpoint enforcement",
+		"endpoint update", "endpoint update enable", "endpoint cursor usage sync", "endpoint grok sync",
+		"endpoint asymptote", "endpoint cloudwatch", "endpoint datadog", "endpoint elastic",
+		"endpoint falcon", "endpoint gcs", "endpoint rapid7", "endpoint s3", "endpoint sentinel",
+		"endpoint sumo", "endpoint wazuh", "cloud", "mcp connect", "mcp token", "rules pull",
+		"version check", "version refresh", "git notes push", "git hook pre-push", "skills install",
+		"memory skills install",
 	} {
 		c := firstRunnable(findCommand(t, path))
 		if c == nil {
@@ -200,6 +210,37 @@ func TestLocalOnlyRefusesTheKnownEgressCommands(t *testing.T) {
 		if err := preRun(c); !isRefusal(err) {
 			t.Errorf("`beacon %s` ran under the lock (pre-run returned %v)", commandPathBelowRoot(c), err)
 		}
+	}
+}
+
+// The whole table is pinned, conditional rules included: a rule that one above shadows (such as
+// "endpoint update enable" under "endpoint update") or one that only fires on a flag still fails
+// here when it is deleted, so every change to the lock is also a deliberate edit of this list.
+func TestLocalOnlyRuleTableIsPinned(t *testing.T) {
+	want := []string{
+		"login", "logout", "share", "endpoint connect", "endpoint onboarding", "endpoint enforcement",
+		"endpoint update", "endpoint update enable", "endpoint cursor usage sync", "endpoint grok sync",
+		"endpoint asymptote", "endpoint cloudwatch", "endpoint datadog", "endpoint elastic",
+		"endpoint falcon", "endpoint gcs", "endpoint rapid7", "endpoint s3", "endpoint sentinel",
+		"endpoint sumo", "endpoint wazuh",
+		"endpoint install (when)", "endpoint install (when)", "endpoint install (when)", "endpoint install (when)",
+		"endpoint repair (when)", "endpoint repair (when)", "endpoint repair (when)",
+		"endpoint hooks install (when)", "endpoint hooks install (when)",
+		"endpoint integrations vscode setup (when)", "endpoint integrations claude-cowork setup (when)",
+		"cloud", "ci (when)", "mcp connect", "mcp token", "mcp serve (when)", "rules pull",
+		"version check", "version refresh", "memory evaluations run (when)", "handoff resume (when)",
+		"git notes push", "git hook pre-push", "git setup (when)", "skills install", "memory skills install",
+	}
+	got := make([]string, 0, len(localOnlyRules))
+	for _, rule := range localOnlyRules {
+		entry := rule.path
+		if rule.when != nil {
+			entry += " (when)"
+		}
+		got = append(got, entry)
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("rule table changed (%d rules, want %d):\n%s", len(got), len(want), strings.Join(got, "\n"))
 	}
 }
 
@@ -377,5 +418,97 @@ func TestOnboardingIsSkippedInTheNuroEdition(t *testing.T) {
 	reason, skip := onboardingSkipReason(onboarding.Profile{})
 	if !skip || reason != onboardingSkipLocalOnly {
 		t.Fatalf("onboardingSkipReason = (%q, %v), want (%q, true)", reason, skip, onboardingSkipLocalOnly)
+	}
+}
+
+// A failed `endpoint doctor --fix` puts the old collector config back. Under the lock it starts the
+// collector on that config only if it exports to the local log alone; an earlier build's Splunk
+// exporter leaves the collector stopped and says so.
+func TestRepairRollbackUnderTheLockReloadsOnlyALocalCollector(t *testing.T) {
+	t.Setenv(localonly.Env, "1")
+	const local = "exporters:\n  beaconjson:\n    path: /tmp/runtime.jsonl\n"
+	for name, tc := range map[string]struct {
+		before    string
+		wantLoads int
+	}{
+		"local log only":            {local, 2},
+		"an earlier build's Splunk": {local + "  splunk_hec:\n    endpoint: https://splunk.example:8088/services/collector\n", 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			prevOpts, prevLoad, prevSave := endpointOpts, repairLoadEndpointConfig, repairSaveEndpointConfig
+			prevBinary, prevWrite, prevWait, prevManager := repairResolveCollectorBinary, repairWriteCollectorConfig, repairWaitCollectorReady, newRepairServiceManager
+			t.Cleanup(func() {
+				endpointOpts, repairLoadEndpointConfig, repairSaveEndpointConfig = prevOpts, prevLoad, prevSave
+				repairResolveCollectorBinary, repairWriteCollectorConfig, repairWaitCollectorReady, newRepairServiceManager = prevBinary, prevWrite, prevWait, prevManager
+			})
+			home := t.TempDir()
+			testenv.SetHome(t, home)
+			collectorConfig := filepath.Join(home, "otelcol.yaml")
+			cfg := endpointconfig.Config{UserMode: true, LogPath: filepath.Join(home, "runtime.jsonl"),
+				Collector: endpointconfig.Collector{ConfigPath: collectorConfig, SpoolPath: filepath.Join(home, "spool", "otlp.jsonl"),
+					GRPCPort: endpointconfig.DefaultGRPCPort, HTTPPort: endpointconfig.DefaultHTTPPort}}
+			if _, err := endpointconfig.Save(cfg); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(collectorConfig, []byte(tc.before), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			manager := &fakeRepairServiceManager{plistPath: filepath.Join(home, "agent.plist")}
+			newRepairServiceManager = func(bool) repairServiceManager { return manager }
+			repairResolveCollectorBinary = func(string) (string, error) { return filepath.Join(home, "beacon-otelcol"), nil }
+			repairWriteCollectorConfig = func(c endpointconfig.Config) error {
+				return os.WriteFile(c.Collector.ConfigPath, []byte(local), 0o600)
+			}
+			repairWaitCollectorReady = func(endpointconfig.Config, time.Duration) error { return context.DeadlineExceeded }
+			endpointOpts.logPath = ""
+
+			err := repairCollectorServiceFromStatus(lifecycle.Status{
+				RuntimeLog: lifecycle.RuntimeLogSource{EffectiveUserMode: true},
+				Service:    service.Status{Loaded: true},
+			})
+
+			if manager.loads != tc.wantLoads {
+				t.Fatalf("Load calls = %d, want %d", manager.loads, tc.wantLoads)
+			}
+			stopped := err != nil && strings.Contains(err.Error(), "left the collector stopped")
+			if stopped != (tc.wantLoads == 1) {
+				t.Fatalf("repair error = %v", err)
+			}
+			assertFileContent(t, collectorConfig, tc.before)
+		})
+	}
+}
+
+// VS Code resolves the endpoint name itself, so under the lock a localhost endpoint is written as
+// 127.0.0.1 and a hosts file cannot point Copilot's telemetry elsewhere.
+func TestVSCodeSetupWritesLocalhostAs127001UnderTheLock(t *testing.T) {
+	t.Setenv(localonly.Env, "1")
+	testenv.SetHome(t, t.TempDir())
+	workspace := t.TempDir()
+	prev := endpointOpts
+	t.Cleanup(func() { endpointOpts = prev })
+	endpointOpts.vscodeEndpoint = "HTTP://LOCALHOST:4318"
+	endpointOpts.vscodeWorkspace = workspace
+	endpointOpts.dryRun = false
+
+	if err := runEndpointVSCodeSetup(); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(workspace, ".vscode", "settings.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "127.0.0.1:4318") || strings.Contains(strings.ToLower(string(data)), "localhost") {
+		t.Fatalf("settings = %s, want the endpoint written as 127.0.0.1", data)
+	}
+	for raw, want := range map[string]string{
+		"http://localhost:4318/v1": "http://127.0.0.1:4318/v1",
+		"http://localhost":         "http://127.0.0.1",
+		"http://[::1]:4318":        "http://[::1]:4318",
+		"http://127.0.0.1:4318":    "http://127.0.0.1:4318",
+	} {
+		if got := pinLoopbackHost(raw); got != want {
+			t.Errorf("pinLoopbackHost(%q) = %q, want %q", raw, got, want)
+		}
 	}
 }

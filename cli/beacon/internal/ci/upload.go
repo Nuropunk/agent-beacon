@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/endpoint/schema"
+	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/localonly"
 )
 
 const (
@@ -184,6 +185,15 @@ func uploadScheme(provider string) string {
 func (s *Session) UploadArtifacts(ctx context.Context) ([]UploadResult, error) {
 	if s == nil || len(s.Uploads) == 0 {
 		return nil, nil
+	}
+	// The --upload flag is refused under the nuro edition's lock, but a CI state file another build
+	// wrote (or one passed with --state) can still list uploads; the runtime log stays here.
+	if localonly.Enforced() {
+		results := make([]UploadResult, 0, len(s.Uploads))
+		for _, dest := range s.Uploads {
+			results = append(results, uploadFailure(dest, "off in the nuro edition"))
+		}
+		return results, localonly.Refuse("uploading the CI runtime log", "it would copy the runtime log to cloud storage")
 	}
 	results := make([]UploadResult, 0, len(s.Uploads))
 	for _, dest := range s.Uploads {

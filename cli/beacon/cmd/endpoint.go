@@ -15,6 +15,7 @@ import (
 	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/endpoint/integrations/openclaw"
 	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/endpoint/integrations/vscode"
 	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/endpoint/writer"
+	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/localonly"
 )
 
 var endpointOpts struct {
@@ -646,6 +647,9 @@ func runEndpointVSCodeSetup() error {
 	endpoint := endpointOpts.vscodeEndpoint
 	if endpoint == "" {
 		endpoint = fmt.Sprintf("http://127.0.0.1:%d", cfg.Collector.HTTPPort)
+	}
+	if localonly.Enforced() {
+		endpoint = pinLoopbackHost(endpoint)
 	}
 	setup := vscode.Config{
 		Endpoint:       endpoint,

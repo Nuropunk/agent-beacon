@@ -13,6 +13,7 @@ import (
 	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/brewpath"
 	endpointconfig "github.com/asymptote-labs/agent-beacon/cli/beacon/internal/endpoint/config"
 	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/localonly"
+	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -213,6 +214,29 @@ service:
       processors: [memory_limiter, batch]
       exporters: %s
 `, cfg.Collector.GRPCPort, grpcLimitYAML, cfg.Collector.HTTPPort, modelContextYAML, cfg.LogPath, runtimeMetricsYAML+codexSpansYAML+modelContextYAML+splunkExporter+falconExporter, endpointconfig.HealthCheckPort(cfg.Collector), exporters, exporters, exporters)
+}
+
+// ExportsLocallyOnly reports whether the collector config at path exports to the local log alone.
+// A rollback under the nuro edition's lock checks it before starting a collector on a config it put
+// back, which an earlier build may have written with a Splunk or Falcon exporter. A config that
+// cannot be read or parsed counts as not local.
+func ExportsLocallyOnly(path string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	var parsed struct {
+		Exporters map[string]yaml.Node `yaml:"exporters"`
+	}
+	if yaml.Unmarshal(data, &parsed) != nil {
+		return false
+	}
+	for name := range parsed.Exporters {
+		if name != "beaconjson" {
+			return false
+		}
+	}
+	return true
 }
 
 func splunkHECYAML(cfg endpointconfig.Config) string {

@@ -39,7 +39,8 @@ var pulseCmd = &cobra.Command{
 	Long: `Report which agent runtimes Beacon has seen lately.
 
 For each runtime in the runtime log, the pulse gives the time of its last event, event counts for
-the last 6 and 24 hours (split by observed and inferred fidelity), an hourly histogram, and a grade:
+the last 6 and 24 hours (the 24-hour count split by observed and inferred fidelity), an hourly
+histogram, and a grade:
 LIVE (an event within 6 hours), STALE (within 24 hours), DARK (older, or named with --expect and
 never seen) or HELD (on hold in the nuro edition). The grade comes only from events Beacon wrote;
 a runtime that sent nothing is never reported alive.

@@ -32,6 +32,7 @@ import (
 	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/endpoint/schema"
 	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/endpoint/service"
 	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/endpoint/writer"
+	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/localonly"
 	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/sessionfs"
 	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/version"
 )
@@ -101,8 +102,11 @@ type repairRollback struct {
 	manager          repairServiceManager
 	serviceWasLoaded bool
 	serviceLoaded    bool
-	files            []string
-	snapshots        map[string]repairFileSnapshot
+	// collectorConfig is the collector config the reloaded service reads; under the nuro edition's
+	// lock the service is reloaded only if that config exports locally alone.
+	collectorConfig string
+	files           []string
+	snapshots       map[string]repairFileSnapshot
 }
 
 var (
@@ -1647,6 +1651,7 @@ func repairCollectorServiceFromStatus(status lifecycle.Status) error {
 	rollback := newRepairRollback(manager, status.Service.Loaded)
 	rollback.Track(endpointconfig.ConfigPath(userMode))
 	rollback.Track(cfg.Collector.ConfigPath)
+	rollback.collectorConfig = cfg.Collector.ConfigPath
 	rollback.Track(plistPath)
 
 	if endpointOpts.logPath != "" {
@@ -1711,7 +1716,10 @@ func (r *repairRollback) Rollback() error {
 		}
 	}
 	if r.serviceWasLoaded {
-		if err := r.manager.Load(); err != nil {
+		// The config put back may be an earlier build's, forwarding to Splunk or Falcon.
+		if localonly.Enforced() && !endpointcollector.ExportsLocallyOnly(r.collectorConfig) {
+			errs = append(errs, fmt.Errorf("left the collector stopped: the config put back at %s does not export to the local log alone, and the nuro edition keeps everything on this machine", r.collectorConfig))
+		} else if err := r.manager.Load(); err != nil {
 			errs = append(errs, err)
 		}
 	}

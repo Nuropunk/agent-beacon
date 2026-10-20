@@ -347,6 +347,21 @@ func loopbackDialAddr(addr string) (string, bool) {
 	return addr, ip != nil && ip.IsLoopback()
 }
 
+// pinLoopbackHost writes a localhost URL with 127.0.0.1 in its place, so a program Beacon configures
+// does not resolve the name itself; any other URL comes back as it was.
+func pinLoopbackHost(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || !strings.EqualFold(u.Hostname(), "localhost") {
+		return raw
+	}
+	if port := u.Port(); port != "" {
+		u.Host = net.JoinHostPort("127.0.0.1", port)
+	} else {
+		u.Host = "127.0.0.1"
+	}
+	return u.String()
+}
+
 // loopbackURL reports whether raw names a loopback IP address or localhost.
 func loopbackURL(raw string) bool {
 	u, err := url.Parse(raw)

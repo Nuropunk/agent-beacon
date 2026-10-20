@@ -520,15 +520,15 @@ func mergeCodexOTEL(existing, endpoint string) string {
 
 func mergeCodexOTELWithPrompt(existing, endpoint string, logUserPrompt bool) string {
 	lines := strings.Split(existing, "\n")
+	metricsOff := codexMetricsOptedOut(lines)
 	var out []string
 	inOTEL := false
 	wroteOTEL := false
 	for _, line := range lines {
-		trim := strings.TrimSpace(line)
-		if strings.HasPrefix(trim, "[") && strings.HasSuffix(trim, "]") {
-			isOTELHeader := codexOTELHeader(trim)
+		if name, ok := codexTableName(line); ok {
+			isOTELHeader := codexOTELTable(name)
 			if inOTEL && !isOTELHeader && !wroteOTEL {
-				out = append(out, codexOTELBlock(endpoint, logUserPrompt)...)
+				out = append(out, codexOTELBlock(endpoint, logUserPrompt, metricsOff)...)
 				wroteOTEL = true
 			}
 			inOTEL = isOTELHeader
@@ -543,27 +543,96 @@ func mergeCodexOTELWithPrompt(existing, endpoint string, logUserPrompt bool) str
 		out = append(out, line)
 	}
 	if inOTEL && !wroteOTEL {
-		out = append(out, codexOTELBlock(endpoint, logUserPrompt)...)
+		out = append(out, codexOTELBlock(endpoint, logUserPrompt, metricsOff)...)
 		wroteOTEL = true
 	}
 	if !wroteOTEL {
 		if strings.TrimSpace(existing) != "" {
 			out = append(out, "")
 		}
-		out = append(out, codexOTELBlock(endpoint, logUserPrompt)...)
+		out = append(out, codexOTELBlock(endpoint, logUserPrompt, metricsOff)...)
 	}
 	return strings.TrimRight(strings.Join(out, "\n"), "\n") + "\n"
 }
 
-func codexOTELHeader(header string) bool {
-	return header == "[otel]" || strings.HasPrefix(header, "[otel.")
+// codexTableName returns the table a TOML header line opens, as dotted keys with the whitespace,
+// quotes and trailing comment TOML allows taken out, so `[ otel . "exporter" ] # note` reads as
+// otel.exporter. A header the merge failed to recognize would keep the old table beside Beacon's,
+// and Codex refuses a config that declares [otel] twice.
+func codexTableName(line string) (string, bool) {
+	trim := strings.TrimSpace(line)
+	if !strings.HasPrefix(trim, "[") {
+		return "", false
+	}
+	end := strings.LastIndex(trim, "]")
+	if end < 1 {
+		return "", false
+	}
+	if rest := strings.TrimSpace(trim[end+1:]); rest != "" && !strings.HasPrefix(rest, "#") {
+		return "", false
+	}
+	inner := strings.TrimSpace(trim[1:end])
+	if strings.HasPrefix(inner, "[") && strings.HasSuffix(inner, "]") {
+		inner = strings.TrimSpace(inner[1 : len(inner)-1])
+	}
+	var keys []string
+	var key strings.Builder
+	var quote rune
+	for _, r := range inner {
+		switch {
+		case quote != 0:
+			if r == quote {
+				quote = 0
+			} else {
+				key.WriteRune(r)
+			}
+		case r == '"' || r == '\'':
+			quote = r
+		case r == '.':
+			keys = append(keys, key.String())
+			key.Reset()
+		case r != ' ' && r != '\t':
+			key.WriteRune(r)
+		}
+	}
+	return strings.Join(append(keys, key.String()), "."), true
 }
 
-func codexOTELBlock(endpoint string, logUserPrompt bool) []string {
-	return []string{
+func codexOTELTable(name string) bool {
+	return name == "otel" || strings.HasPrefix(name, "otel.")
+}
+
+// codexMetricsOptedOut reports whether the existing [otel] table turns Codex's metrics exporter off.
+// Beacon replaces the whole table, so it writes that opt-out back rather than drop it.
+func codexMetricsOptedOut(lines []string) bool {
+	table := ""
+	for _, line := range lines {
+		if name, ok := codexTableName(line); ok {
+			table = name
+			continue
+		}
+		key, value, found := strings.Cut(line, "=")
+		if !found || table != "otel" || strings.TrimSpace(key) != "metrics_exporter" {
+			continue
+		}
+		value, _, _ = strings.Cut(value, "#")
+		if strings.Trim(strings.TrimSpace(value), `"'`) == "none" {
+			return true
+		}
+	}
+	return false
+}
+
+func codexOTELBlock(endpoint string, logUserPrompt, metricsOff bool) []string {
+	block := []string{
 		"[otel]",
 		"environment = \"dev\"",
 		fmt.Sprintf("log_user_prompt = %t", logUserPrompt),
+	}
+	if metricsOff {
+		block = append(block, "metrics_exporter = \"none\"")
+	}
+	return append(block,
 		"",
 		"[otel.exporter.\"otlp-grpc\"]",
 		fmt.Sprintf("endpoint = %q", endpoint),
@@ -574,7 +643,7 @@ func codexOTELBlock(endpoint string, logUserPrompt bool) []string {
 		// the same turn through both channels.
 		"[otel.trace_exporter.\"otlp-grpc\"]",
 		fmt.Sprintf("endpoint = %q", endpoint),
-	}
+	)
 }
 
 func claudeStatus(path string) (TelemetryStatus, string) {

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/endpoint/schema"
+	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/localonly"
 )
 
 func TestNormalizeUploadsSplitsAndDedupes(t *testing.T) {
@@ -143,6 +144,29 @@ func TestUploadArtifactCommandFailure(t *testing.T) {
 	}
 	if result.Status != "fail" || result.Message != "boom" {
 		t.Fatalf("result = %#v", result)
+	}
+}
+
+// A state file can list uploads the lock never let a flag add; under the lock none of them runs.
+func TestUploadArtifactsRunsNothingUnderTheLock(t *testing.T) {
+	t.Setenv(localonly.Env, "1")
+	calls, restore := stubUploadCommands(t, map[string]bool{"aws": true, "gcloud": true, "gsutil": true}, nil)
+	defer restore()
+
+	session := &Session{LogPath: "/tmp/runtime.jsonl", Uploads: []UploadDestination{
+		{Provider: UploadS3, URI: "s3://bucket/key"},
+		{Provider: UploadGCS, URI: "gs://bucket/key"},
+	}}
+	results, err := session.UploadArtifacts(context.Background())
+	var refused *localonly.ErrRefused
+	if !errors.As(err, &refused) {
+		t.Fatalf("UploadArtifacts error = %v, want a refusal", err)
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("upload commands ran under the lock: %v", *calls)
+	}
+	if len(results) != 2 || results[0].Status != "fail" || results[1].Status != "fail" {
+		t.Fatalf("results = %#v", results)
 	}
 }
 
