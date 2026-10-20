@@ -77,6 +77,10 @@ if ! grep -q 'forwarder_stably_running' "$ROOT_DIR/packaging/macos/scripts/posti
   echo "postinstall should wait for bootout and verify stable forwarder startup" >&2
   exit 1
 fi
+if ! grep -q "grep -q 'nuro edition'" "$ROOT_DIR/packaging/macos/scripts/postinstall"; then
+  echo "postinstall should skip the forwarders and the self-updater in the nuro edition" >&2
+  exit 1
+fi
 if ! grep -q 'com.beacon.endpoint.gcs-forwarder' "$ROOT_DIR/packaging/macos/scripts/postinstall"; then
   echo "postinstall should restore the optional GCS forwarder" >&2
   exit 1

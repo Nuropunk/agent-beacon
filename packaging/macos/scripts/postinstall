@@ -112,18 +112,28 @@ restore_existing_forwarder() {
   return 1
 }
 
+# The nuro edition keeps everything on this machine: it never restarts a forwarder an earlier build
+# installed, and its self-updater is off (the lock refuses `beacon endpoint update`).
+nuro_edition() {
+  "${BEACON_BIN:-/opt/beacon/bin/beacon}" version 2>/dev/null | grep -q 'nuro edition'
+}
+
 if command -v launchctl >/dev/null 2>&1; then
   launchctl bootout system/com.beacon.endpoint.collector >/dev/null 2>&1 || true
   launchctl bootstrap system /Library/LaunchDaemons/com.beacon.endpoint.collector.plist >/dev/null 2>&1 || {
     launchctl print system/com.beacon.endpoint.collector >/dev/null 2>&1 || exit 1
   }
-  restore_existing_forwarder "com.beacon.endpoint.falcon-forwarder" "/Library/LaunchDaemons/com.beacon.endpoint.falcon-forwarder.plist"
-  restore_existing_forwarder "com.beacon.endpoint.s3-forwarder" "/Library/LaunchDaemons/com.beacon.endpoint.s3-forwarder.plist"
-  restore_existing_forwarder "com.beacon.endpoint.gcs-forwarder" "/Library/LaunchDaemons/com.beacon.endpoint.gcs-forwarder.plist"
-  "${BEACON_BIN:-/opt/beacon/bin/beacon}" endpoint update install-daemon || {
-    echo "Error: could not reconcile Beacon endpoint updater daemon" >&2
-    exit 1
-  }
+  if nuro_edition; then
+    echo "Beacon nuro edition: forwarders from an earlier install are not restarted (their LaunchDaemons still load at boot until that build's uninstall removes them), and the self-updater is not installed" >&2
+  else
+    restore_existing_forwarder "com.beacon.endpoint.falcon-forwarder" "/Library/LaunchDaemons/com.beacon.endpoint.falcon-forwarder.plist"
+    restore_existing_forwarder "com.beacon.endpoint.s3-forwarder" "/Library/LaunchDaemons/com.beacon.endpoint.s3-forwarder.plist"
+    restore_existing_forwarder "com.beacon.endpoint.gcs-forwarder" "/Library/LaunchDaemons/com.beacon.endpoint.gcs-forwarder.plist"
+    "${BEACON_BIN:-/opt/beacon/bin/beacon}" endpoint update install-daemon || {
+      echo "Error: could not reconcile Beacon endpoint updater daemon" >&2
+      exit 1
+    }
+  fi
   # The scheduled inventory job is on by default; loading it fires the first heartbeat at once, so
   # an endpoint upgraded from a version without the job starts reporting inventory immediately.
   # Non-fatal: the endpoint is installed and collecting either way.
