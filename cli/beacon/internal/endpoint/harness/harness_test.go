@@ -80,10 +80,11 @@ func TestMergeCodexOTELReplacesEverySpellingOfTheOldTables(t *testing.T) {
 // beside Beacon's; ConfigureCodex then writes nothing and says so.
 func TestConfigureCodexRefusesAMergeItCannotCheck(t *testing.T) {
 	for name, seed := range map[string]string{
-		"an escaped otel key":  "model = \"o3\"\n\n[\"\\u006ftel\".metrics_exporter.otlp-http]\nendpoint = \"https://metrics.example.invalid/v1/metrics\"\n",
-		"a dotted otel key":    "otel.metrics_exporter.otlp-http.endpoint = \"https://metrics.example.invalid/v1/metrics\"\n",
-		"an inline otel table": "otel = { environment = \"prod\" }\n",
-		"an unreadable config": "model = \"o3\n",
+		"an escaped otel key":                 "model = \"o3\"\n\n[\"\\u006ftel\".metrics_exporter.otlp-http]\nendpoint = \"https://metrics.example.invalid/v1/metrics\"\n",
+		"a dotted otel key":                   "otel.metrics_exporter.otlp-http.endpoint = \"https://metrics.example.invalid/v1/metrics\"\n",
+		"an inline otel table":                "otel = { environment = \"prod\" }\n",
+		"a header inside a multi-line string": "[otel]\nenvironment = \"x\"\n\n[profiles.a]\nprompt = \"\"\"\n[otel]\nline B keep me\n[tail]\n\"\"\"\n",
+		"an unreadable config":                "model = \"o3\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			home := t.TempDir()
@@ -109,6 +110,154 @@ func TestConfigureCodexRefusesAMergeItCannotCheck(t *testing.T) {
 	}
 }
 
+// setCodexConfig points Codex's home at a temp dir holding config.toml with seed, and returns its path.
+func setCodexConfig(t *testing.T, seed string) string {
+	t.Helper()
+	home := t.TempDir()
+	testenv.SetHome(t, home)
+	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
+	path := filepath.Join(home, ".codex", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(seed), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestConfigureCodexKeepsTablesThatOnlyLookLikeOTEL(t *testing.T) {
+	for name, tc := range map[string]struct {
+		seed  string
+		check func(map[string]any) bool
+	}{
+		"an escaped quote in the next header": {"[otel]\nenvironment = \"prod\"\n\n[mcp_servers.\"a\\\"b\"]\ncommand = \"npx\"\n",
+			func(c map[string]any) bool {
+				servers, _ := c["mcp_servers"].(map[string]any)
+				server, _ := servers["a\"b"].(map[string]any)
+				return server["command"] == "npx"
+			}},
+		"a quoted root key with a dot": {"[\"otel.notes\"]\ntext = \"keep\"\n",
+			func(c map[string]any) bool {
+				notes, _ := c["otel.notes"].(map[string]any)
+				return notes["text"] == "keep"
+			}},
+		"a byte-order mark": {"\ufeffmodel = \"o3\"\n", func(c map[string]any) bool { return c["model"] == "o3" }},
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := setCodexConfig(t, tc.seed)
+			if _, err := ConfigureCodex(ConfigureOptions{Endpoint: "http://127.0.0.1:4317", UserMode: true}); err != nil {
+				t.Fatalf("ConfigureCodex returned error: %v", err)
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			parsed := map[string]any{}
+			if err := toml.Unmarshal([]byte(strings.TrimPrefix(string(data), "\ufeff")), &parsed); err != nil {
+				t.Fatalf("written config does not parse: %v\n%s", err, data)
+			}
+			if !tc.check(parsed) {
+				t.Fatalf("a table outside otel was lost:\n%s", data)
+			}
+		})
+	}
+}
+
+func TestConfigureCodexTurnsMetricsOffUnderTheLock(t *testing.T) {
+	for _, locked := range []bool{true, false} {
+		path := setCodexConfig(t, "model = \"o3\"\n")
+		if locked {
+			t.Setenv(localonly.Env, "1")
+		} else {
+			t.Setenv(localonly.Env, "")
+		}
+		if _, err := ConfigureCodex(ConfigureOptions{Endpoint: "http://127.0.0.1:4317", UserMode: true}); err != nil {
+			t.Fatalf("ConfigureCodex returned error: %v", err)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := strings.Contains(string(data), "metrics_exporter = \"none\""); got != locked {
+			t.Fatalf("locked=%v: metrics_exporter none written = %v\n%s", locked, got, data)
+		}
+	}
+}
+
+// unreadableFile writes seed at path with no read permission, and skips the test when this user can
+// read it anyway (root keeps CAP_DAC_OVERRIDE unless it is dropped).
+func unreadableFile(t *testing.T, path, seed string) {
+	t.Helper()
+	testenv.RequirePOSIXFileModes(t)
+	if err := os.WriteFile(path, []byte(seed), 0o200); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o200); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.ReadFile(path); err == nil {
+		t.Skip("this user can read a file with no read permission")
+	}
+}
+
+func TestConfigureRefusesSettingsItCannotRead(t *testing.T) {
+	const seed = "{\"keep\": true}\n"
+	t.Run("codex", func(t *testing.T) {
+		path := setCodexConfig(t, "")
+		unreadableFile(t, path, seed)
+		if _, err := ConfigureCodex(ConfigureOptions{Endpoint: "http://127.0.0.1:4317", UserMode: true}); err == nil {
+			t.Fatal("ConfigureCodex wrote over a config it could not read")
+		}
+		assertUnchangedNoBackup(t, path, seed)
+	})
+	t.Run("claude", func(t *testing.T) {
+		home := t.TempDir()
+		testenv.SetHome(t, home)
+		path := filepath.Join(home, ".claude", "settings.json")
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		unreadableFile(t, path, seed)
+		if _, err := ConfigureClaude(ConfigureOptions{Endpoint: "http://127.0.0.1:4317", UserMode: true}); err == nil {
+			t.Fatal("ConfigureClaude wrote over settings it could not read")
+		}
+		assertUnchangedNoBackup(t, path, seed)
+	})
+}
+
+func assertUnchangedNoBackup(t *testing.T, path, seed string) {
+	t.Helper()
+	if err := os.Chmod(path, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(path); err != nil || string(data) != seed {
+		t.Fatalf("%s changed: %q, %v", path, data, err)
+	}
+	if backups, _ := filepath.Glob(path + ".beacon.*.bak"); len(backups) != 0 {
+		t.Fatalf("backups written for a refused merge: %v", backups)
+	}
+}
+
+func TestConfigureClaudeAndGeminiAcceptNullSettings(t *testing.T) {
+	home := t.TempDir()
+	testenv.SetHome(t, home)
+	for _, path := range []string{filepath.Join(home, ".claude", "settings.json"), GeminiSettingsPath(home)} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("null"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := ConfigureClaude(ConfigureOptions{Endpoint: "http://127.0.0.1:4317", UserMode: true}); err != nil {
+		t.Fatalf("ConfigureClaude returned error: %v", err)
+	}
+	if _, err := ConfigureGemini(ConfigureOptions{Endpoint: "http://127.0.0.1:4317", UserMode: true}); err != nil {
+		t.Fatalf("ConfigureGemini returned error: %v", err)
+	}
+}
+
 func TestConfigureClaudeKeepsOtherSettingsAndRefusesOnesItCannotRead(t *testing.T) {
 	home := t.TempDir()
 	testenv.SetHome(t, home)
@@ -116,15 +265,19 @@ func TestConfigureClaudeKeepsOtherSettingsAndRefusesOnesItCannotRead(t *testing.
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, []byte(`{"isolatePeerMachines":true,"permissions":{"deny":["Bash(rm:*)"]}}`), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(`{"isolatePeerMachines":true,"permissions":{"deny":["Bash(rm:*)"]},"someId":12345678901234567890}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := ConfigureClaude(ConfigureOptions{Endpoint: "http://127.0.0.1:4317", UserMode: true}); err != nil {
 		t.Fatalf("ConfigureClaude returned error: %v", err)
 	}
 	var settings map[string]any
-	if data, err := os.ReadFile(path); err != nil || json.Unmarshal(data, &settings) != nil {
+	data, err := os.ReadFile(path)
+	if err != nil || json.Unmarshal(data, &settings) != nil {
 		t.Fatalf("read settings: %v", err)
+	}
+	if !strings.Contains(string(data), "12345678901234567890") {
+		t.Fatalf("a large number was rewritten:\n%s", data)
 	}
 	if settings["isolatePeerMachines"] != true || settings["permissions"] == nil {
 		t.Fatalf("other settings dropped: %v", settings)

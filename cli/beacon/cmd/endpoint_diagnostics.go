@@ -1718,12 +1718,21 @@ func (r *repairRollback) Rollback() error {
 	if r.serviceWasLoaded {
 		// The config put back may be an earlier build's, forwarding to Splunk or Falcon.
 		if localonly.Enforced() && !endpointcollector.ExportsLocallyOnly(r.collectorConfig) {
-			errs = append(errs, fmt.Errorf("did not restart the collector on the config put back at %s, which exports beyond the local log; its service can still start at boot, so run `beacon endpoint repair` once the collector can start, or remove the earlier build with its `beacon endpoint uninstall`", r.collectorConfig))
+			errs = append(errs, collectorNotReloaded(r.collectorConfig))
 		} else if err := r.manager.Load(); err != nil {
 			errs = append(errs, err)
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// collectorNotReloaded says why a rollback under the lock left the collector service alone. It does
+// not say whether the collector is running: a repair that failed before reloading it never stopped it.
+func collectorNotReloaded(path string) error {
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("did not reload the collector service, because no collector config is left at %s; run `beacon endpoint repair` once it can succeed", path)
+	}
+	return fmt.Errorf("did not reload the collector service on the config put back at %s, which exports beyond the local log; run `beacon endpoint repair` once it can succeed, or `beacon endpoint uninstall`", path)
 }
 
 func rollbackRepairError(err error, rollback *repairRollback) error {

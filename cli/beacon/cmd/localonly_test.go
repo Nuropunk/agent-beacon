@@ -147,6 +147,7 @@ func TestLocalOnlyFlagRules(t *testing.T) {
 		{"mcp serve", nil, false},
 		{"mcp serve", map[string]string{"transport": "stdio"}, false},
 		{"mcp serve", map[string]string{"transport": "http"}, true},
+		{"mcp serve", map[string]string{"transport": "sse"}, true},
 		{"handoff resume", nil, false},
 		{"handoff resume", map[string]string{"agent": "claude"}, false},
 		{"handoff resume", map[string]string{"agent": "codex"}, true},
@@ -163,6 +164,9 @@ func TestLocalOnlyFlagRules(t *testing.T) {
 		{"ci exec", map[string]string{"forward": "splunk"}, true},
 		{"ci start", map[string]string{"forward-endpoint": "https://hec.example"}, true},
 		{"ci exec", map[string]string{"upload": "s3"}, true},
+		// The macOS package's postinstall runs this in both editions; under the lock it removes an
+		// updater an earlier install left, so a refusal would fail every nuro package install.
+		{"endpoint update install-daemon", nil, false},
 		{"endpoint integrations vscode setup", nil, false},
 		{"endpoint integrations vscode setup", map[string]string{"endpoint": "http://127.0.0.1:4318"}, false},
 		{"endpoint integrations vscode setup", map[string]string{"endpoint": "http://localhost:4318"}, false},
@@ -221,7 +225,7 @@ func TestLocalOnlyRefusesTheKnownEgressCommands(t *testing.T) {
 func TestLocalOnlyRuleTableIsPinned(t *testing.T) {
 	want := []string{
 		"login", "logout", "share", "endpoint connect", "endpoint onboarding", "endpoint enforcement",
-		"endpoint update", "endpoint update enable", "endpoint cursor usage sync", "endpoint grok sync",
+		"endpoint update (exact)", "endpoint update enable", "endpoint cursor usage sync", "endpoint grok sync",
 		"endpoint asymptote", "endpoint cloudwatch", "endpoint datadog", "endpoint elastic",
 		"endpoint falcon", "endpoint gcs", "endpoint rapid7", "endpoint s3", "endpoint sentinel",
 		"endpoint sumo", "endpoint wazuh",
@@ -230,12 +234,15 @@ func TestLocalOnlyRuleTableIsPinned(t *testing.T) {
 		"endpoint hooks install (when)", "endpoint hooks install (when)",
 		"endpoint integrations vscode setup (when)", "endpoint integrations claude-cowork setup (when)",
 		"cloud", "ci (when)", "mcp connect", "mcp token", "mcp serve (when)", "rules pull",
-		"version check", "version refresh", "memory evaluations run (when)", "handoff resume (when)",
+		"version check (exact)", "version refresh (exact)", "memory evaluations run (when)", "handoff resume (when)",
 		"git notes push", "git hook pre-push", "git setup (when)", "skills install", "memory skills install",
 	}
 	got := make([]string, 0, len(localOnlyRules))
 	for _, rule := range localOnlyRules {
 		entry := rule.path
+		if rule.exact {
+			entry += " (exact)"
+		}
 		if rule.when != nil {
 			entry += " (when)"
 		}
@@ -430,11 +437,13 @@ func TestRepairRollbackUnderTheLockReloadsOnlyALocalCollector(t *testing.T) {
 	t.Setenv(localonly.Env, "1")
 	const local = "exporters:\n  beaconjson:\n    path: /tmp/runtime.jsonl\n"
 	for name, tc := range map[string]struct {
-		before    string
+		before    string // "" means no collector config before the repair
 		wantLoads int
+		wantError string
 	}{
-		"local log only":            {local, 2},
-		"an earlier build's Splunk": {local + "  splunk_hec:\n    endpoint: https://splunk.example:8088/services/collector\n", 1},
+		"local log only":            {local, 2, ""},
+		"an earlier build's Splunk": {local + "  splunk_hec:\n    endpoint: https://splunk.example:8088/services/collector\n", 1, "which exports beyond the local log"},
+		"no config before":          {"", 1, "no collector config is left"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			prevOpts, prevLoad, prevSave := endpointOpts, repairLoadEndpointConfig, repairSaveEndpointConfig
@@ -452,8 +461,10 @@ func TestRepairRollbackUnderTheLockReloadsOnlyALocalCollector(t *testing.T) {
 			if _, err := endpointconfig.Save(cfg); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.WriteFile(collectorConfig, []byte(tc.before), 0o600); err != nil {
-				t.Fatal(err)
+			if tc.before != "" {
+				if err := os.WriteFile(collectorConfig, []byte(tc.before), 0o600); err != nil {
+					t.Fatal(err)
+				}
 			}
 			manager := &fakeRepairServiceManager{plistPath: filepath.Join(home, "agent.plist")}
 			newRepairServiceManager = func(bool) repairServiceManager { return manager }
@@ -472,9 +483,15 @@ func TestRepairRollbackUnderTheLockReloadsOnlyALocalCollector(t *testing.T) {
 			if manager.loads != tc.wantLoads {
 				t.Fatalf("Load calls = %d, want %d", manager.loads, tc.wantLoads)
 			}
-			stopped := err != nil && strings.Contains(err.Error(), "did not restart the collector")
-			if stopped != (tc.wantLoads == 1) {
+			notReloaded := err != nil && strings.Contains(err.Error(), "did not reload the collector service")
+			if notReloaded != (tc.wantError != "") || (tc.wantError != "" && !strings.Contains(err.Error(), tc.wantError)) {
 				t.Fatalf("repair error = %v", err)
+			}
+			if tc.before == "" {
+				if _, statErr := os.Stat(collectorConfig); !os.IsNotExist(statErr) {
+					t.Fatalf("collector config left behind: %v", statErr)
+				}
+				return
 			}
 			assertFileContent(t, collectorConfig, tc.before)
 		})

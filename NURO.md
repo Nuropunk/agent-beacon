@@ -35,27 +35,34 @@ lock off; that takes a build with `EDITION=community`. Under the lock:
   refused so each runtime is named. `cli/beacon/cmd/localonly.go` lists all 47 rules. One test
   checks that each names a real command, another checks that every unconditional rule's command
   refuses before it runs, a third gives each of the 16 conditional rules a flag case it must
-  refuse, and a fourth pins the whole table, so deleting or loosening any rule fails a test.
+  refuse, and a fourth pins the whole table with which rules match a path exactly. Deleting a
+  rule, making it exact or dropping its condition fails a test; a narrower condition is caught
+  only where a flag case covers it.
 - The collector config leaves out any Splunk or Falcon destination, including one an earlier
   install left in `config.json`, so the collector writes only the local log. A collector still
   running on a config from a community install keeps it until `beacon endpoint repair` rewrites it.
   When a failed install or `endpoint doctor --fix` puts back a config that exports anywhere but the
-  local log, the collector is not started again on it. Its service can still start it at
-  boot, so run `beacon endpoint repair` once the collector can start, or remove the earlier build
-  with its `beacon endpoint uninstall`.
+  local log, or leaves no config, Beacon does not reload the collector service on it, and doctor
+  says so. A collector the failed repair never stopped keeps running on that config until
+  `beacon endpoint repair` succeeds or `beacon endpoint uninstall` removes it.
 - Install and repair never re-render or restart a Beacon Cloud forwarder, even one an earlier build
   connected; it is left as it is, to be removed with that build's `beacon endpoint uninstall`.
 - Claude Code's user settings (`~/.claude/settings.json`) get the local collector as their only
   OTLP endpoint: a per-signal endpoint left there (`OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` and the like)
-  is removed, since it would outrank the local one. Every other key in the file is kept, and a file
-  that does not parse is refused and left unchanged rather than written over (in both editions). Project, local and managed Claude settings and
-  the shell environment are not edited, so check them for such endpoints yourself.
+  is removed, since it would outrank the local one. Every other key is kept with its value exactly
+  as written. In both editions a file Beacon cannot read or parse is refused and left unchanged
+  rather than written over, which stops the install with an error. Project, local
+  and managed Claude settings and the shell environment are not edited, so check them for such
+  endpoints yourself.
 - VS Code Copilot's telemetry endpoint is written as 127.0.0.1 when given as `localhost`, so VS
-  Code does not resolve the name itself. Codex's `[otel]` tables are replaced in the
-  spellings it reads (spaces, quoted keys, a trailing comment), a `metrics_exporter = "none"`
-  opt-out in them is kept, and the result is parsed and checked before it is written. A spelling it
-  cannot check, such as an escaped key, a dotted `otel.` key or an inline table, is refused and the
-  file is left unchanged (in both editions).
+  Code does not resolve the name itself. Beacon's merge replaces
+  Codex's `[otel]` tables in the spellings it follows (spaces, quoted keys, escaped quotes, a
+  trailing comment) and keeps a `metrics_exporter = "none"` opt-out; under the lock it always
+  writes that opt-out, since Beacon collects no Codex metrics and Codex's default metrics exporter
+  was not checked. Before writing, it parses the file before and after and requires Beacon's otel
+  table and nothing else to have changed. In both editions anything else (an escaped or dotted
+  `otel` key, an inline table, a header inside a multi-line string, a file it cannot read or
+  parse) is refused, the file is left unchanged, and the install stops with an error.
 - The process's default HTTP transport dials loopback addresses only, and dials `localhost` as
   127.0.0.1 instead of resolving it, so an HTTP request the rules miss cannot leave Beacon's own
   process. Programs Beacon starts are not covered by it: `beacon git notes fetch`, which the lock
@@ -127,7 +134,8 @@ These come from reading the upstream code and docs for this fork. They are notes
 
 - Prefer user mode. In system mode the runtime log is mode 0666, so any local account can read
   the prompts, commands and paths in it (`docs/platforms/linux-deployment-profile.mdx`). User
-  mode keeps logs at 0600. The macOS package installs in system mode, so on a Mac run `beacon endpoint install --user` from a source build instead.
+  mode keeps logs at 0600. The macOS package installs in system mode, so on a Mac run
+  `beacon endpoint install --user` from a source build instead.
 - `beacon status --json` carries the latest full event under `last_event`. Treat its output as
   private and never pipe it to a cloud log or CI output.
 - The browser extension defaults to full prompt and response retention
