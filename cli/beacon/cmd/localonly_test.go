@@ -442,7 +442,7 @@ func TestRepairRollbackUnderTheLockReloadsOnlyALocalCollector(t *testing.T) {
 		wantError string
 	}{
 		"local log only":            {local, 2, ""},
-		"an earlier build's Splunk": {local + "  splunk_hec:\n    endpoint: https://splunk.example:8088/services/collector\n", 1, "which exports beyond the local log"},
+		"an earlier build's Splunk": {local + "  splunk_hec:\n    endpoint: https://splunk.example:8088/services/collector\n", 1, "cannot confirm exports only to the local log"},
 		"no config before":          {"", 1, "no collector config is left"},
 	} {
 		t.Run(name, func(t *testing.T) {

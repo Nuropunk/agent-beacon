@@ -49,11 +49,11 @@ lock off; that takes a build with `EDITION=community`. Under the lock:
   connected; it is left as it is, to be removed with that build's `beacon endpoint uninstall`.
 - Claude Code's user settings (`~/.claude/settings.json`) get the local collector as their only
   OTLP endpoint: a per-signal endpoint left there (`OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` and the like)
-  is removed, since it would outrank the local one. Every other key is kept with its value exactly
-  as written. In both editions a file Beacon cannot read or parse is refused and left unchanged
-  rather than written over, which stops the install with an error. Project, local
-  and managed Claude settings and the shell environment are not edited, so check them for such
-  endpoints yourself.
+  is removed, since it would outrank the local one. Every key Beacon does not manage keeps its
+  value, `env` entries included, though the file is re-indented with its keys sorted. In both
+  editions a file Beacon cannot read or parse is refused and left unchanged rather than written
+  over. Project, local and managed Claude settings and the shell environment are not edited, so
+  check them for such endpoints yourself.
 - VS Code Copilot's telemetry endpoint is written as 127.0.0.1 when given as `localhost`, so VS
   Code does not resolve the name itself. Beacon's merge replaces
   Codex's `[otel]` tables in the spellings it follows (spaces, quoted keys, escaped quotes, a
@@ -61,8 +61,11 @@ lock off; that takes a build with `EDITION=community`. Under the lock:
   writes that opt-out, since Beacon collects no Codex metrics and Codex's default metrics exporter
   was not checked. Before writing, it parses the file before and after and requires Beacon's otel
   table and nothing else to have changed. In both editions anything else (an escaped or dotted
-  `otel` key, an inline table, a header inside a multi-line string, a file it cannot read or
-  parse) is refused, the file is left unchanged, and the install stops with an error.
+  `otel` key, an inline table, a header inside a multi-line string that it would read as otel, a
+  file it cannot read or parse) is refused and the file is left unchanged.
+- A refused settings file stops a direct `beacon endpoint install` with an error. The macOS and
+  Linux packages configure the installing user's settings in a step that warns and carries on, so
+  there the package still installs and the warning says to rerun that step.
 - The process's default HTTP transport dials loopback addresses only, and dials `localhost` as
   127.0.0.1 instead of resolving it, so an HTTP request the rules miss cannot leave Beacon's own
   process. Programs Beacon starts are not covered by it: `beacon git notes fetch`, which the lock

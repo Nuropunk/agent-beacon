@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -392,11 +393,15 @@ func ConfigureClaude(opts ConfigureOptions) (string, error) {
 	// Keys other than env are carried as raw JSON, so their values come back exactly as written
 	// (a large number does not round through float64), as the hook installer keeps them.
 	settings := map[string]json.RawMessage{}
+	env := map[string]interface{}{}
 	if data, err := os.ReadFile(path); err == nil {
 		// Writing over settings that do not parse would drop every key in them, the person's
 		// hooks and permissions included, so refuse as the Gemini and hook installers do.
 		if err := json.Unmarshal(data, &settings); err != nil {
 			return "", fmt.Errorf("Claude settings JSON is invalid: %w", err)
+		}
+		if env, err = decodeClaudeEnv(settings["env"]); err != nil {
+			return "", fmt.Errorf("Claude settings env is invalid: %w", err)
 		}
 		if err := backup(path, data); err != nil {
 			return "", err
@@ -406,12 +411,6 @@ func ConfigureClaude(opts ConfigureOptions) (string, error) {
 	}
 	if settings == nil { // the file held null
 		settings = map[string]json.RawMessage{}
-	}
-	env := map[string]interface{}{}
-	if raw, ok := settings["env"]; ok {
-		if json.Unmarshal(raw, &env) != nil || env == nil {
-			env = map[string]interface{}{}
-		}
 	}
 	env["CLAUDE_CODE_ENABLE_TELEMETRY"] = "1"
 	env["OTEL_LOGS_EXPORTER"] = "otlp"
@@ -468,6 +467,25 @@ func ConfigureClaude(opts ConfigureOptions) (string, error) {
 	return path, os.WriteFile(path, data, 0600)
 }
 
+// decodeClaudeEnv decodes the settings' env object with numbers kept as written, so an entry Beacon
+// does not set comes back unchanged. A missing or non-object env decodes as empty and is replaced.
+func decodeClaudeEnv(raw json.RawMessage) (map[string]interface{}, error) {
+	if len(raw) == 0 {
+		return map[string]interface{}{}, nil
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var decoded interface{}
+	if err := decoder.Decode(&decoded); err != nil {
+		return nil, err
+	}
+	env, ok := decoded.(map[string]interface{})
+	if !ok {
+		return map[string]interface{}{}, nil
+	}
+	return env, nil
+}
+
 func ConfigureCodex(opts ConfigureOptions) (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -500,7 +518,8 @@ func ConfigureCodex(opts ConfigureOptions) (string, error) {
 
 // checkCodexOTEL parses the Codex config before and after the merge, and confirms the merged otel
 // table is exactly the one Beacon writes and nothing outside it changed. The merge works line by
-// line to keep the person's comments and layout, and TOML has spellings it does not follow (escaped
+// line to keep the layout and the comments outside the otel table, and TOML has spellings it does
+// not follow (escaped
 // keys, dotted or inline otel keys at the root, a header inside a multi-line string); for those the
 // result could fail to parse, keep an exporter beside Beacon's or lose other settings, so nothing
 // is written.
@@ -528,8 +547,9 @@ func checkCodexOTEL(existing, merged, endpoint string, logUserPrompt, metricsOff
 	}
 	delete(before, "otel")
 	delete(parsed, "otel")
-	// %#v prints maps in key order with each value's type, and unlike reflect.DeepEqual it treats a
-	// nan value as equal to itself.
+	// %#v prints maps in key order and, unlike reflect.DeepEqual, treats a nan value as equal to
+	// itself. It prints some distinct TOML values alike (1 and 1.0, one time at two offsets), which
+	// is enough here because the merge copies every line outside the otel table unchanged.
 	if fmt.Sprintf("%#v", before) != fmt.Sprintf("%#v", parsed) {
 		return fmt.Errorf("Beacon's merge would change settings outside its otel table")
 	}
@@ -582,6 +602,11 @@ func mergeCodexOTEL(existing, endpoint string) string {
 }
 
 func mergeCodexOTELWithPrompt(existing, endpoint string, logUserPrompt bool) string {
+	// A byte-order mark would hide a header on the first line from the scan; it goes back on output.
+	bom := ""
+	if strings.HasPrefix(existing, "\ufeff") {
+		bom, existing = "\ufeff", strings.TrimPrefix(existing, "\ufeff")
+	}
 	lines := strings.Split(existing, "\n")
 	metricsOff := codexMetricsOff(lines)
 	var out []string
@@ -615,7 +640,7 @@ func mergeCodexOTELWithPrompt(existing, endpoint string, logUserPrompt bool) str
 		}
 		out = append(out, codexOTELBlock(endpoint, logUserPrompt, metricsOff)...)
 	}
-	return strings.TrimRight(strings.Join(out, "\n"), "\n") + "\n"
+	return bom + strings.TrimRight(strings.Join(out, "\n"), "\n") + "\n"
 }
 
 // codexTableName returns the keys of the table a TOML header line opens, with the whitespace, quotes

@@ -143,6 +143,11 @@ func TestConfigureCodexKeepsTablesThatOnlyLookLikeOTEL(t *testing.T) {
 				return notes["text"] == "keep"
 			}},
 		"a byte-order mark": {"\ufeffmodel = \"o3\"\n", func(c map[string]any) bool { return c["model"] == "o3" }},
+		"a byte-order mark before an otel header": {"\ufeff[otel]\nenvironment = \"prod\"\n\n[tui]\nx = 1\n",
+			func(c map[string]any) bool {
+				tui, _ := c["tui"].(map[string]any)
+				return tui["x"] == int64(1)
+			}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			path := setCodexConfig(t, tc.seed)
@@ -211,6 +216,19 @@ func TestConfigureRefusesSettingsItCannotRead(t *testing.T) {
 		}
 		assertUnchangedNoBackup(t, path, seed)
 	})
+	t.Run("gemini", func(t *testing.T) {
+		home := t.TempDir()
+		testenv.SetHome(t, home)
+		path := GeminiSettingsPath(home)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		unreadableFile(t, path, seed)
+		if _, err := ConfigureGemini(ConfigureOptions{Endpoint: "http://127.0.0.1:4317", UserMode: true}); err == nil {
+			t.Fatal("ConfigureGemini wrote over settings it could not read")
+		}
+		assertUnchangedNoBackup(t, path, seed)
+	})
 	t.Run("claude", func(t *testing.T) {
 		home := t.TempDir()
 		testenv.SetHome(t, home)
@@ -265,7 +283,7 @@ func TestConfigureClaudeKeepsOtherSettingsAndRefusesOnesItCannotRead(t *testing.
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, []byte(`{"isolatePeerMachines":true,"permissions":{"deny":["Bash(rm:*)"]},"someId":12345678901234567890}`), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(`{"isolatePeerMachines":true,"permissions":{"deny":["Bash(rm:*)"]},"someId":12345678901234567890,"env":{"BIG":12345678901234567890,"HUGE":1e400,"KEEP":"x"}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := ConfigureClaude(ConfigureOptions{Endpoint: "http://127.0.0.1:4317", UserMode: true}); err != nil {
@@ -273,11 +291,17 @@ func TestConfigureClaudeKeepsOtherSettingsAndRefusesOnesItCannotRead(t *testing.
 	}
 	var settings map[string]any
 	data, err := os.ReadFile(path)
-	if err != nil || json.Unmarshal(data, &settings) != nil {
+	if err != nil {
 		t.Fatalf("read settings: %v", err)
 	}
-	if !strings.Contains(string(data), "12345678901234567890") {
-		t.Fatalf("a large number was rewritten:\n%s", data)
+	decoder := json.NewDecoder(strings.NewReader(string(data)))
+	decoder.UseNumber() // 1e400 is valid JSON but no float64
+	if err := decoder.Decode(&settings); err != nil {
+		t.Fatalf("settings no longer parse: %v\n%s", err, data)
+	}
+	if strings.Count(string(data), "12345678901234567890") != 2 || !strings.Contains(string(data), "1e400") ||
+		!strings.Contains(string(data), `"KEEP": "x"`) {
+		t.Fatalf("a value outside Beacon's keys was rewritten or dropped:\n%s", data)
 	}
 	if settings["isolatePeerMachines"] != true || settings["permissions"] == nil {
 		t.Fatalf("other settings dropped: %v", settings)

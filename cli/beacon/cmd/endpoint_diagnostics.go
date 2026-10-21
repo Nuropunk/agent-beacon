@@ -1732,7 +1732,7 @@ func collectorNotReloaded(path string) error {
 	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("did not reload the collector service, because no collector config is left at %s; run `beacon endpoint repair` once it can succeed", path)
 	}
-	return fmt.Errorf("did not reload the collector service on the config put back at %s, which exports beyond the local log; run `beacon endpoint repair` once it can succeed, or `beacon endpoint uninstall`", path)
+	return fmt.Errorf("did not reload the collector service on the config put back at %s, which Beacon cannot confirm exports only to the local log; run `beacon endpoint repair` once it can succeed, or `beacon endpoint uninstall`", path)
 }
 
 func rollbackRepairError(err error, rollback *repairRollback) error {
