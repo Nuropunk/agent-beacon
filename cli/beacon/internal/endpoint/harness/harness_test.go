@@ -43,10 +43,11 @@ func TestMergeCodexOTELReplacesExistingBlock(t *testing.T) {
 // user's metrics opt-out is written back.
 func TestMergeCodexOTELReplacesEverySpellingOfTheOldTables(t *testing.T) {
 	for name, input := range map[string]string{
-		"spaces in the header":   "[ otel.metrics_exporter.\"otlp-http\" ]\nendpoint = \"https://metrics.example.invalid/v1/metrics\"\n",
-		"spaces around the dots": "[otel . exporter . \"otlp-http\"]\nendpoint = \"https://logs.example.invalid/v1/logs\"\n",
-		"a quoted first key":     "[\"otel\".trace_exporter.\"otlp-http\"]\nendpoint = \"https://traces.example.invalid/v1/traces\"\n",
-		"a comment after it":     "[otel] # telemetry\nexporter = \"otlp-http\"\n\n[otel.exporter.\"otlp-http\"] # old\nendpoint = \"https://logs.example.invalid/v1/logs\"\n",
+		"spaces in the header":    "[ otel.metrics_exporter.\"otlp-http\" ]\nendpoint = \"https://metrics.example.invalid/v1/metrics\"\n",
+		"spaces around the dots":  "[otel . exporter . \"otlp-http\"]\nendpoint = \"https://logs.example.invalid/v1/logs\"\n",
+		"a quoted first key":      "[\"otel\".trace_exporter.\"otlp-http\"]\nendpoint = \"https://traces.example.invalid/v1/traces\"\n",
+		"a comment after it":      "[otel] # telemetry\nexporter = \"otlp-http\"\n\n[otel.exporter.\"otlp-http\"] # old\nendpoint = \"https://logs.example.invalid/v1/logs\"\n",
+		"brackets in the comment": "[otel] # see [runbook]\nmetrics_exporter = { otlp-http = { endpoint = \"https://metrics.example.invalid/v1/metrics\" } }\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			got := mergeCodexOTEL("model = \"gpt-5\"\n\n"+input+"\n[ profile ]\nname = \"default\"\n", "http://127.0.0.1:4317")
@@ -62,14 +63,92 @@ func TestMergeCodexOTELReplacesEverySpellingOfTheOldTables(t *testing.T) {
 			}
 		})
 	}
-	got := mergeCodexOTEL("[otel]\nmetrics_exporter = \"none\" # no usage metrics\n", "http://127.0.0.1:4317")
-	var parsed struct {
-		OTEL struct {
-			MetricsExporter string `toml:"metrics_exporter"`
-		} `toml:"otel"`
+	for _, optOut := range []string{`metrics_exporter = "none" # no usage metrics`, `"metrics_exporter" = 'none'`} {
+		got := mergeCodexOTEL("[otel]\n"+optOut+"\n", "http://127.0.0.1:4317")
+		var parsed struct {
+			OTEL struct {
+				MetricsExporter string `toml:"metrics_exporter"`
+			} `toml:"otel"`
+		}
+		if err := toml.Unmarshal([]byte(got), &parsed); err != nil || parsed.OTEL.MetricsExporter != "none" {
+			t.Fatalf("metrics opt-out %q was dropped (%v):\n%s", optOut, err, got)
+		}
 	}
-	if err := toml.Unmarshal([]byte(got), &parsed); err != nil || parsed.OTEL.MetricsExporter != "none" {
-		t.Fatalf("metrics opt-out was dropped (%v):\n%s", err, got)
+}
+
+// Spellings the line merge does not follow would leave Codex an unreadable config or an exporter
+// beside Beacon's; ConfigureCodex then writes nothing and says so.
+func TestConfigureCodexRefusesAMergeItCannotCheck(t *testing.T) {
+	for name, seed := range map[string]string{
+		"an escaped otel key":  "model = \"o3\"\n\n[\"\\u006ftel\".metrics_exporter.otlp-http]\nendpoint = \"https://metrics.example.invalid/v1/metrics\"\n",
+		"a dotted otel key":    "otel.metrics_exporter.otlp-http.endpoint = \"https://metrics.example.invalid/v1/metrics\"\n",
+		"an inline otel table": "otel = { environment = \"prod\" }\n",
+		"an unreadable config": "model = \"o3\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			home := t.TempDir()
+			testenv.SetHome(t, home)
+			t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
+			path := filepath.Join(home, ".codex", "config.toml")
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte(seed), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := ConfigureCodex(ConfigureOptions{Endpoint: "http://127.0.0.1:4317", UserMode: true}); err == nil {
+				t.Fatal("ConfigureCodex accepted a merge it could not check")
+			}
+			if data, err := os.ReadFile(path); err != nil || string(data) != seed {
+				t.Fatalf("config.toml changed: %q, %v", data, err)
+			}
+			if backups, _ := filepath.Glob(path + ".beacon.*.bak"); len(backups) != 0 {
+				t.Fatalf("backups written for a refused merge: %v", backups)
+			}
+		})
+	}
+}
+
+func TestConfigureClaudeKeepsOtherSettingsAndRefusesOnesItCannotRead(t *testing.T) {
+	home := t.TempDir()
+	testenv.SetHome(t, home)
+	path := filepath.Join(home, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"isolatePeerMachines":true,"permissions":{"deny":["Bash(rm:*)"]}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ConfigureClaude(ConfigureOptions{Endpoint: "http://127.0.0.1:4317", UserMode: true}); err != nil {
+		t.Fatalf("ConfigureClaude returned error: %v", err)
+	}
+	var settings map[string]any
+	if data, err := os.ReadFile(path); err != nil || json.Unmarshal(data, &settings) != nil {
+		t.Fatalf("read settings: %v", err)
+	}
+	if settings["isolatePeerMachines"] != true || settings["permissions"] == nil {
+		t.Fatalf("other settings dropped: %v", settings)
+	}
+
+	// A fresh home, so a backup from the call above cannot hide one written by the refusal.
+	home = t.TempDir()
+	testenv.SetHome(t, home)
+	path = filepath.Join(home, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	seed := `{"isolatePeerMachines": true,}`
+	if err := os.WriteFile(path, []byte(seed), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ConfigureClaude(ConfigureOptions{Endpoint: "http://127.0.0.1:4317", UserMode: true}); err == nil {
+		t.Fatal("ConfigureClaude wrote over settings it could not read")
+	}
+	if data, err := os.ReadFile(path); err != nil || string(data) != seed {
+		t.Fatalf("settings.json changed: %q, %v", data, err)
+	}
+	if backups, _ := filepath.Glob(path + ".beacon.*.bak"); len(backups) != 0 {
+		t.Fatalf("backup written for a refused merge: %v", backups)
 	}
 }
 

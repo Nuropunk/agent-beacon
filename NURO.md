@@ -33,23 +33,29 @@ lock off; that takes a build with `EDITION=community`. Under the lock:
   read them, and copying captured trace content into a project's `.agents/skills` (`memory skills
   install`). `beacon mcp serve` runs over stdio only, and installing hooks for "all" runtimes is
   refused so each runtime is named. `cli/beacon/cmd/localonly.go` lists all 47 rules. One test
-  checks that each names a real command, another runs every unconditional rule's command by name
-  and expects a refusal, and a third pins the whole table, so deleting any rule fails a test.
+  checks that each names a real command, another checks that every unconditional rule's command
+  refuses before it runs, a third gives each of the 16 conditional rules a flag case it must
+  refuse, and a fourth pins the whole table, so deleting or loosening any rule fails a test.
 - The collector config leaves out any Splunk or Falcon destination, including one an earlier
   install left in `config.json`, so the collector writes only the local log. A collector still
   running on a config from a community install keeps it until `beacon endpoint repair` rewrites it.
   When a failed install or `endpoint doctor --fix` puts back a config that exports anywhere but the
-  local log, the collector is left stopped rather than started on it.
+  local log, the collector is not started again on it. Its service can still start it at
+  boot, so run `beacon endpoint repair` once the collector can start, or remove the earlier build
+  with its `beacon endpoint uninstall`.
 - Install and repair never re-render or restart a Beacon Cloud forwarder, even one an earlier build
   connected; it is left as it is, to be removed with that build's `beacon endpoint uninstall`.
 - Claude Code's user settings (`~/.claude/settings.json`) get the local collector as their only
   OTLP endpoint: a per-signal endpoint left there (`OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` and the like)
-  is removed, since it would outrank the local one. Project, local and managed Claude settings and
+  is removed, since it would outrank the local one. Every other key in the file is kept, and a file
+  that does not parse is refused and left unchanged rather than written over (in both editions). Project, local and managed Claude settings and
   the shell environment are not edited, so check them for such endpoints yourself.
 - VS Code Copilot's telemetry endpoint is written as 127.0.0.1 when given as `localhost`, so VS
-  Code does not resolve the name itself. Codex's `[otel]` tables are replaced in every spelling
-  TOML allows (spaces, quoted keys, a trailing comment), and a `metrics_exporter = "none"` opt-out
-  in them is kept.
+  Code does not resolve the name itself. Codex's `[otel]` tables are replaced in the
+  spellings it reads (spaces, quoted keys, a trailing comment), a `metrics_exporter = "none"`
+  opt-out in them is kept, and the result is parsed and checked before it is written. A spelling it
+  cannot check, such as an escaped key, a dotted `otel.` key or an inline table, is refused and the
+  file is left unchanged (in both editions).
 - The process's default HTTP transport dials loopback addresses only, and dials `localhost` as
   127.0.0.1 instead of resolving it, so an HTTP request the rules miss cannot leave Beacon's own
   process. Programs Beacon starts are not covered by it: `beacon git notes fetch`, which the lock
@@ -107,9 +113,10 @@ These come from reading the upstream code and docs for this fork. They are notes
   uploads the runtime log as a workflow artifact by default. Do not use it for Nuro's work.
 - The macOS package still carries upstream's Jamf helper scripts that install S3, GCS and Falcon
   forwarders (`packaging/macos/jamf`); do not run them by hand. In the nuro edition the package's
-  postinstall does not restart a forwarder an earlier install left, or install the self-updater,
-  but that forwarder's LaunchDaemon still loads at boot until the earlier build's uninstall removes
-  it.
+  postinstall does not restart forwarders an earlier install left or reconcile Beacon Cloud, and
+  its updater step removes any self-updater an earlier install left, since the lock turns updates
+  off. A forwarder's LaunchDaemon still loads at boot until an uninstall removes it; this build's
+  `beacon endpoint uninstall --system` does.
 - `.goreleaser.yaml` still names upstream's release and Homebrew targets. A release from this fork
   needs its own targets and the owner's go.
 - The lock covers the processes this build runs. If the machine ever ran another Beacon build,
@@ -120,8 +127,7 @@ These come from reading the upstream code and docs for this fork. They are notes
 
 - Prefer user mode. In system mode the runtime log is mode 0666, so any local account can read
   the prompts, commands and paths in it (`docs/platforms/linux-deployment-profile.mdx`). User
-  mode keeps logs at 0600. The macOS package installs in system mode with full content retention,
-  so on a Mac run `beacon endpoint install --user` from a source build instead.
+  mode keeps logs at 0600. The macOS package installs in system mode, so on a Mac run `beacon endpoint install --user` from a source build instead.
 - `beacon status --json` carries the latest full event under `last_event`. Treat its output as
   private and never pipe it to a cloud log or CI output.
 - The browser extension defaults to full prompt and response retention

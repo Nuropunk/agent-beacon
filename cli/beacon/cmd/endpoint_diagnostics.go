@@ -1718,7 +1718,7 @@ func (r *repairRollback) Rollback() error {
 	if r.serviceWasLoaded {
 		// The config put back may be an earlier build's, forwarding to Splunk or Falcon.
 		if localonly.Enforced() && !endpointcollector.ExportsLocallyOnly(r.collectorConfig) {
-			errs = append(errs, fmt.Errorf("left the collector stopped: the config put back at %s does not export to the local log alone, and the nuro edition keeps everything on this machine", r.collectorConfig))
+			errs = append(errs, fmt.Errorf("did not restart the collector on the config put back at %s, which exports beyond the local log; its service can still start at boot, so run `beacon endpoint repair` once the collector can start, or remove the earlier build with its `beacon endpoint uninstall`", r.collectorConfig))
 		} else if err := r.manager.Load(); err != nil {
 			errs = append(errs, err)
 		}

@@ -134,6 +134,7 @@ func TestLocalOnlyFlagRules(t *testing.T) {
 		{"endpoint install", map[string]string{"connect": "true"}, true},
 		{"endpoint install", map[string]string{"harness": "all"}, true},
 		{"endpoint install", map[string]string{"harness": "claude,grok"}, true},
+		{"endpoint repair", map[string]string{"harness": "all"}, true},
 		{"endpoint repair", map[string]string{"harness": "grok-build"}, true},
 		{"endpoint repair", map[string]string{"harness": "cursor"}, false},
 		{"endpoint install", map[string]string{"splunk-hec-endpoint": "https://hec.example"}, true},
@@ -161,6 +162,7 @@ func TestLocalOnlyFlagRules(t *testing.T) {
 		{"ci exec", nil, false},
 		{"ci exec", map[string]string{"forward": "splunk"}, true},
 		{"ci start", map[string]string{"forward-endpoint": "https://hec.example"}, true},
+		{"ci exec", map[string]string{"upload": "s3"}, true},
 		{"endpoint integrations vscode setup", nil, false},
 		{"endpoint integrations vscode setup", map[string]string{"endpoint": "http://127.0.0.1:4318"}, false},
 		{"endpoint integrations vscode setup", map[string]string{"endpoint": "http://localhost:4318"}, false},
@@ -422,8 +424,8 @@ func TestOnboardingIsSkippedInTheNuroEdition(t *testing.T) {
 }
 
 // A failed `endpoint doctor --fix` puts the old collector config back. Under the lock it starts the
-// collector on that config only if it exports to the local log alone; an earlier build's Splunk
-// exporter leaves the collector stopped and says so.
+// collector on that config only if it exports to the local log alone; with an earlier build's
+// Splunk exporter it does not restart the collector, and says so.
 func TestRepairRollbackUnderTheLockReloadsOnlyALocalCollector(t *testing.T) {
 	t.Setenv(localonly.Env, "1")
 	const local = "exporters:\n  beaconjson:\n    path: /tmp/runtime.jsonl\n"
@@ -470,7 +472,7 @@ func TestRepairRollbackUnderTheLockReloadsOnlyALocalCollector(t *testing.T) {
 			if manager.loads != tc.wantLoads {
 				t.Fatalf("Load calls = %d, want %d", manager.loads, tc.wantLoads)
 			}
-			stopped := err != nil && strings.Contains(err.Error(), "left the collector stopped")
+			stopped := err != nil && strings.Contains(err.Error(), "did not restart the collector")
 			if stopped != (tc.wantLoads == 1) {
 				t.Fatalf("repair error = %v", err)
 			}

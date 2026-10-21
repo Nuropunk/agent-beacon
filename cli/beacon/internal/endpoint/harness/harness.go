@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/endpoint/integrations/cowork"
 	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/hermessession"
 	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/localonly"
+	"github.com/pelletier/go-toml/v2"
 	"gopkg.in/yaml.v3"
 )
 
@@ -389,7 +391,11 @@ func ConfigureClaude(opts ConfigureOptions) (string, error) {
 	path := filepath.Join(claudesession.ConfigDir(home), "settings.json")
 	settings := map[string]interface{}{}
 	if data, err := os.ReadFile(path); err == nil {
-		_ = json.Unmarshal(data, &settings)
+		// Writing over settings that do not parse would drop every key in them, the person's
+		// hooks and permissions included, so refuse as the Gemini and hook installers do.
+		if err := json.Unmarshal(data, &settings); err != nil {
+			return "", fmt.Errorf("Claude settings JSON is invalid: %w", err)
+		}
 		if err := backup(path, data); err != nil {
 			return "", err
 		}
@@ -459,18 +465,46 @@ func ConfigureCodex(opts ConfigureOptions) (string, error) {
 		return "", err
 	}
 	path := filepath.Join(dir, "config.toml")
-	var existing string
-	if data, err := os.ReadFile(path); err == nil {
-		existing = string(data)
+	data, readErr := os.ReadFile(path)
+	existing := string(data)
+	updated := mergeCodexOTELWithPrompt(existing, opts.Endpoint, true)
+	if err := checkCodexOTEL(updated, opts.Endpoint, true, codexMetricsOptedOut(strings.Split(existing, "\n"))); err != nil {
+		return "", fmt.Errorf("%s: %w; edit its [otel] settings by hand, then run this again", path, err)
+	}
+	if readErr == nil {
 		if err := backup(path, data); err != nil {
 			return "", err
 		}
 	}
-	updated := mergeCodexOTELWithPrompt(existing, opts.Endpoint, true)
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return "", err
 	}
 	return path, os.WriteFile(path, []byte(updated), 0600)
+}
+
+// checkCodexOTEL parses a merged Codex config and confirms its otel table is exactly the one Beacon
+// writes. The merge works line by line to keep the person's comments and layout, and TOML has
+// spellings it does not follow (escaped keys, dotted or inline otel keys at the root); for those the
+// result could fail to parse, or keep an exporter beside Beacon's, so nothing is written.
+func checkCodexOTEL(merged, endpoint string, logUserPrompt, metricsOff bool) error {
+	var parsed map[string]any
+	if err := toml.Unmarshal([]byte(merged), &parsed); err != nil {
+		return fmt.Errorf("Beacon's telemetry settings could not be merged into valid TOML (%v)", err)
+	}
+	exporter := map[string]any{"otlp-grpc": map[string]any{"endpoint": endpoint}}
+	want := map[string]any{
+		"environment":     "dev",
+		"log_user_prompt": logUserPrompt,
+		"exporter":        exporter,
+		"trace_exporter":  exporter,
+	}
+	if metricsOff {
+		want["metrics_exporter"] = "none"
+	}
+	if !reflect.DeepEqual(parsed["otel"], want) {
+		return fmt.Errorf("its otel settings are written in a form Beacon cannot replace, and some would stay beside Beacon's")
+	}
+	return nil
 }
 
 func ValidateConfigured(endpoint string) []ValidationResult {
@@ -556,29 +590,23 @@ func mergeCodexOTELWithPrompt(existing, endpoint string, logUserPrompt bool) str
 }
 
 // codexTableName returns the table a TOML header line opens, as dotted keys with the whitespace,
-// quotes and trailing comment TOML allows taken out, so `[ otel . "exporter" ] # note` reads as
-// otel.exporter. A header the merge failed to recognize would keep the old table beside Beacon's,
+// quotes and trailing comment TOML allows taken out, so `[ otel . "exporter" ] # see [docs]` reads
+// as otel.exporter. A header the merge failed to recognize would keep the old table beside Beacon's,
 // and Codex refuses a config that declares [otel] twice.
 func codexTableName(line string) (string, bool) {
 	trim := strings.TrimSpace(line)
 	if !strings.HasPrefix(trim, "[") {
 		return "", false
 	}
-	end := strings.LastIndex(trim, "]")
-	if end < 1 {
-		return "", false
-	}
-	if rest := strings.TrimSpace(trim[end+1:]); rest != "" && !strings.HasPrefix(rest, "#") {
-		return "", false
-	}
-	inner := strings.TrimSpace(trim[1:end])
-	if strings.HasPrefix(inner, "[") && strings.HasSuffix(inner, "]") {
-		inner = strings.TrimSpace(inner[1 : len(inner)-1])
+	body := trim[1:]
+	array := strings.HasPrefix(body, "[")
+	if array {
+		body = body[1:]
 	}
 	var keys []string
 	var key strings.Builder
 	var quote rune
-	for _, r := range inner {
+	for i, r := range body {
 		switch {
 		case quote != 0:
 			if r == quote {
@@ -588,6 +616,18 @@ func codexTableName(line string) (string, bool) {
 			}
 		case r == '"' || r == '\'':
 			quote = r
+		case r == ']':
+			rest := body[i+1:]
+			if array {
+				if !strings.HasPrefix(rest, "]") {
+					return "", false
+				}
+				rest = rest[1:]
+			}
+			if rest = strings.TrimSpace(rest); rest != "" && !strings.HasPrefix(rest, "#") {
+				return "", false
+			}
+			return strings.Join(append(keys, key.String()), "."), true
 		case r == '.':
 			keys = append(keys, key.String())
 			key.Reset()
@@ -595,7 +635,7 @@ func codexTableName(line string) (string, bool) {
 			key.WriteRune(r)
 		}
 	}
-	return strings.Join(append(keys, key.String()), "."), true
+	return "", false
 }
 
 func codexOTELTable(name string) bool {
@@ -612,7 +652,7 @@ func codexMetricsOptedOut(lines []string) bool {
 			continue
 		}
 		key, value, found := strings.Cut(line, "=")
-		if !found || table != "otel" || strings.TrimSpace(key) != "metrics_exporter" {
+		if !found || table != "otel" || strings.Trim(strings.TrimSpace(key), `"'`) != "metrics_exporter" {
 			continue
 		}
 		value, _, _ = strings.Cut(value, "#")
