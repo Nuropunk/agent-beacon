@@ -644,6 +644,9 @@ func normalizeConfig(cfg Config) Config {
 }
 
 func uploadConfigured(cfg Config) bool {
+	if localOnly() {
+		return false
+	}
 	if cfg.Upload == uploadAsymptote {
 		return asymptoteConfigured(cfg)
 	}

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	endpointconfig "github.com/asymptote-labs/agent-beacon/cli/beacon/internal/endpoint/config"
+	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/localonly"
 )
 
 func testConfig(t *testing.T) endpointconfig.Config {
@@ -214,6 +215,64 @@ func TestConfigYAMLIncludesSplunkAndFalconHECWhenConfigured(t *testing.T) {
 	yaml := ConfigYAML(cfg)
 	if !strings.Contains(yaml, "exporters: [beaconjson, splunk_hec, falcon_hec]") {
 		t.Fatalf("ConfigYAML missing combined exporters:\n%s", yaml)
+	}
+}
+
+func TestConfigYAMLLeavesOutHECUnderTheLock(t *testing.T) {
+	t.Setenv(localonly.Env, "1")
+	cfg := testConfig(t)
+	cfg.Destinations = &endpointconfig.Destinations{
+		SplunkHEC: &endpointconfig.SplunkHEC{Endpoint: "https://splunk.example:8088/services/collector", Token: "hec-token"},
+		FalconHEC: &endpointconfig.FalconHEC{Endpoint: "https://cloud.us.humio.com/api/v1/ingest/hec", Token: "ingest-token"},
+	}
+
+	yaml := ConfigYAML(cfg)
+	if !strings.Contains(yaml, "exporters: [beaconjson]") {
+		t.Fatalf("ConfigYAML under the lock should export to beaconjson only:\n%s", yaml)
+	}
+	for _, leak := range []string{"splunk", "humio", "hec-token", "ingest-token"} {
+		if strings.Contains(yaml, leak) {
+			t.Fatalf("ConfigYAML under the lock contains %q:\n%s", leak, yaml)
+		}
+	}
+}
+
+// A rollback under the lock starts a collector only on a config that exports to the local log alone.
+func TestExportsLocallyOnly(t *testing.T) {
+	t.Setenv(localonly.Env, "")
+	dir := t.TempDir()
+	write := func(name, body string) string {
+		t.Helper()
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	forwarding := testConfig(t)
+	forwarding.Destinations = &endpointconfig.Destinations{SplunkHEC: &endpointconfig.SplunkHEC{
+		Endpoint: "https://splunk.example:8088/services/collector",
+		Token:    "hec-token",
+	}}
+	earlier := ConfigYAML(forwarding)
+	if !strings.Contains(earlier, "splunk_hec:") {
+		t.Fatalf("fixture should render a Splunk exporter:\n%s", earlier)
+	}
+	for name, tc := range map[string]struct {
+		path string
+		want bool
+	}{
+		"local log only":                     {write("local.yaml", ConfigYAML(testConfig(t))), true},
+		"an earlier build's Splunk exporter": {write("splunk.yaml", earlier), false},
+		"any other exporter":                 {write("otlp.yaml", "exporters:\n  beaconjson: {}\n  otlphttp:\n    endpoint: https://otel.example.invalid\n"), false},
+		"unparseable":                        {write("bad.yaml", "exporters: [\n"), false},
+		"missing":                            {filepath.Join(dir, "missing.yaml"), false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := ExportsLocallyOnly(tc.path); got != tc.want {
+				t.Fatalf("ExportsLocallyOnly = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 

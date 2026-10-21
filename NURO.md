@@ -1,0 +1,157 @@
+# Beacon, nuro edition
+
+This repository is a fork of [Beacon](https://github.com/Asymptote-Labs/agent-beacon) by
+[Asymptote Labs](https://asymptotelabs.ai), made for Nuro and nue. Everything Beacon does, from
+capturing 27 agent runtimes to the dashboard, threat rules, lenses and MCP server, is Asymptote
+Labs' work, released under the MIT License in [LICENSE](LICENSE). That notice stays as it is, and
+the changes in this fork are offered under the same license. Thank you, Asymptote Labs.
+
+The fork adds one thing on top: a **nuro edition**, built by default, in which nothing Beacon
+captures leaves the machine. What follows is what that edition changes and what to know before
+installing it.
+
+## What the nuro edition changes
+
+**A local-only lock.** `cli/beacon/internal/localonly` turns on when the build sets
+`version.Edition=nuro` (the default in both Makefiles, the macOS package job and goreleaser's
+archives, Linux packages and MSI) or when `BEACON_LOCAL_ONLY=1` is set for any other build. A plain
+`go build` makes the community edition, so build with `make build`. Nothing at run time turns the
+lock off; that takes a build with `EDITION=community`. Under the lock:
+
+- Commands that would send data off the machine, or hand private traces to another vendor's agent,
+  refuse with a message instead of running: signing in to beacon.sh, sharing, Beacon Cloud and
+  cloud-agent traces, onboarding signups, the enterprise build download, self-updates and release
+  checks, Cursor usage sync, the SIEM and bucket forwarding packs, Splunk and Falcon LogScale
+  forwarding from the collector (the `--splunk-*` and `--falcon-*` install and repair flags), CI
+  forwarding and uploads (uploads a CI state file from another build lists included), pointing VS
+  Code Copilot's telemetry at an address off the machine, the Beacon Cloud
+  MCP server and its tokens, rule downloads, third-party memory evaluations, handoffs to other
+  vendors' agents, git note pushes that skip hooks (`git notes push` and the pre-push hook, whose
+  script ignores the refusal so the person's own push goes on; `beacon git setup
+  --share-notes=false` removes one an earlier install left), session sharing on git push, public
+  tunnels (the Claude Cowork `--ngrok` flag), installing Beacon skills where other vendors' agents
+  read them, and copying captured trace content into a project's `.agents/skills` (`memory skills
+  install`). `beacon mcp serve` runs over stdio only, and installing hooks for "all" runtimes is
+  refused so each runtime is named. `cli/beacon/cmd/localonly.go` lists all 47 rules. One test
+  checks that each names a real command, another checks that every unconditional rule's command
+  refuses before it runs, a third gives each of the 16 conditional rules a flag case it must
+  refuse, and a fourth pins the whole table with which rules match a path exactly. Deleting a
+  rule, making it exact or dropping its condition fails a test; a narrower condition is caught
+  only where a flag case covers it.
+- The collector config leaves out any Splunk or Falcon destination, including one an earlier
+  install left in `config.json`, so the collector writes only the local log. A collector still
+  running on a config from a community install keeps it until `beacon endpoint repair` rewrites it.
+  When a failed install or `endpoint doctor --fix` puts back a config that exports anywhere but the
+  local log, or leaves no config, Beacon does not reload the collector service on it, and doctor
+  says so. A collector the failed repair never stopped keeps running on that config until
+  `beacon endpoint repair` succeeds or `beacon endpoint uninstall` removes it.
+- Install and repair never re-render or restart a Beacon Cloud forwarder, even one an earlier build
+  connected; it is left as it is, to be removed with that build's `beacon endpoint uninstall`.
+- Claude Code's user settings (`~/.claude/settings.json`) get the local collector as their only
+  OTLP endpoint: a per-signal endpoint left there (`OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` and the like)
+  is removed, since it would outrank the local one. Every key Beacon does not manage keeps its
+  value, `env` entries included, though the file is re-indented with its keys sorted. In both
+  editions a file Beacon cannot read or parse is refused and left unchanged rather than written
+  over. Project, local and managed Claude settings and the shell environment are not edited, so
+  check them for such endpoints yourself.
+- VS Code Copilot's telemetry endpoint is written as 127.0.0.1 when given as `localhost`, so VS
+  Code does not resolve the name itself. Beacon's merge replaces
+  Codex's `[otel]` tables in the spellings it follows (spaces, quoted keys, escaped quotes, a
+  trailing comment) and keeps a `metrics_exporter = "none"` opt-out; under the lock it always
+  writes that opt-out, since Beacon collects no Codex metrics and Codex's default metrics exporter
+  was not checked. Before writing, it parses the file before and after and requires Beacon's otel
+  table and nothing else to have changed. In both editions anything else (an escaped or dotted
+  `otel` key, an inline table, a header inside a multi-line string that it would read as otel, a
+  file it cannot read or parse) is refused and the file is left unchanged.
+- A refused settings file stops a direct `beacon endpoint install` with an error. The macOS and
+  Linux packages configure the installing user's settings in a step that warns and carries on, so
+  there the package still installs and the warning says to rerun that step.
+- The process's default HTTP transport dials loopback addresses only, and dials `localhost` as
+  127.0.0.1 instead of resolving it, so an HTTP request the rules miss cannot leave Beacon's own
+  process. Programs Beacon starts are not covered by it: `beacon git notes fetch`, which the lock
+  allows, runs git, and git contacts the repository's remote to fetch notes (it sends no captured
+  data).
+- The hooks binary never uploads (`cli/beacon-hooks/internal/cloudshuttle`).
+- Grok is held: Beacon does not run its binary during discovery and refuses to install hooks for
+  it, sync it or backfill from it.
+
+**Pulse.** `beacon pulse` summarizes the runtime log as metadata-only JSON: for each runtime, when
+Beacon last saw an event, counts for the last 6 and 24 hours (the 24-hour count split by observed
+and inferred fidelity), an hourly histogram, and a grade of LIVE (an event within 6 hours), STALE
+(within 24),
+DARK (older, or expected and never seen) or HELD. It holds no prompts, commands, paths, users,
+hostnames or repositories, never reads the hostname (`--machine` or `BEACON_PULSE_MACHINE` names
+the machine), and writes a 0600 file with `--out`. A harness name or collection method in the log
+that is not shaped like a name is counted as `unknown` or dropped, never copied. It never sends
+anything on its own.
+
+**Two rule packs**, both in detect posture, so they flag and never block:
+
+- `rules/owner-gates`: merges and deploys, chain and wallet actions, and any held engine at work.
+  These are steps that wait for the owner's go.
+- `rules/private-data`: bypassing a hook (`--no-verify` and the like), another vendor's agent
+  reading a private store, a private read followed by network egress, and voice or biosignal
+  files leaving the machine.
+
+**The dashboard in nue's palette.** The nuro edition serves the dashboard with a dark void
+background, turquoise, aqua, violet and gold accents, and fonts referenced with `local()` only,
+so the page loads nothing from the network. Lenses get the same palette through their tokens.
+Community builds serve the upstream pages unchanged. Neither of the two candidate nue color pairs
+is used; the palette is the general NUE one until Nuro picks.
+
+**The Nuro Brain lens.** A built-in lens that draws a trace as a brain: each kind of event is a
+region that lights only from the trace's own events, inferred events glow dim, lines join regions
+where one kind of event followed another, and a trace with no events stays quiet. Nothing
+animates on its own.
+
+## Build
+
+```sh
+cd cli/beacon
+make build                     # nuro edition, the default
+make build EDITION=community   # upstream behavior, no lock
+```
+
+Build from source. `cli/beacon/beacon.zip` is a prebuilt binary committed upstream, with nothing
+to verify it against; this fork does not use it, and neither should you.
+
+## Before installing
+
+These come from reading the upstream code and docs for this fork. They are notes, not changes:
+
+- The GitHub Action in `action.yml` installs upstream's community release, not this edition, and
+  uploads the runtime log as a workflow artifact by default. Do not use it for Nuro's work.
+- The macOS package still carries upstream's Jamf helper scripts that install S3, GCS and Falcon
+  forwarders (`packaging/macos/jamf`); do not run them by hand. In the nuro edition the package's
+  postinstall does not restart forwarders an earlier install left or reconcile Beacon Cloud, and
+  its updater step removes any self-updater an earlier install left, since the lock turns updates
+  off. A forwarder's LaunchDaemon still loads at boot until an uninstall removes it; this build's
+  `beacon endpoint uninstall --system` does.
+- `.goreleaser.yaml` still names upstream's release and Homebrew targets. A release from this fork
+  needs its own targets and the owner's go.
+- The lock covers the processes this build runs. If the machine ever ran another Beacon build,
+  run that build's `beacon endpoint uninstall` first and remove any forwarding service it set up
+  (a Vector pack or Beacon Cloud connection): those run as their own processes, outside the lock.
+  Its git pre-push hooks call that build's binary by full path, so in each repository where it ran
+  `beacon git setup --share-notes`, run `beacon git setup --share-notes=false`.
+
+- Prefer user mode. In system mode the runtime log is mode 0666, so any local account can read
+  the prompts, commands and paths in it (`docs/platforms/linux-deployment-profile.mdx`). User
+  mode keeps logs at 0600. The macOS package installs in system mode, so on a Mac run
+  `beacon endpoint install --user` from a source build instead.
+- `beacon status --json` carries the latest full event under `last_event`. Treat its output as
+  private and never pipe it to a cloud log or CI output.
+- The browser extension defaults to full prompt and response retention
+  (`browser-extension/src/shared/types.ts`). Leave it uninstalled, or set it to metadata only.
+- Some runtimes can take Beacon's hooks without a trust prompt: Hermes documents
+  `HERMES_ACCEPT_HOOKS=1` for it, and Muse's managed hooks run without a trust step. Install
+  hooks only for runtimes you name.
+- The macOS package's postinstall rewrites the console user's Claude and Codex settings,
+  `~/.claude/settings.json` included, on every upgrade. If another tool manages that file, keep
+  Beacon's hook entries in that tool's source so the two do not fight.
+- `beacon-sandbox` runs real agent sessions on Modal with the Anthropic API, which costs money,
+  and runs Claude Code with `--dangerously-skip-permissions`. Its free unit tests are fine; do
+  not run it live without the owner's go.
+
+Installing on a machine, turning on anything that sends data, and merging this fork's changes
+all wait on the owner's explicit go.

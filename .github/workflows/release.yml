@@ -163,10 +163,10 @@ jobs:
           for ARCH in $BEACON_PKG_ARCHES; do
             # Embed the arch-matched hooks binary, then build beacon for that arch.
             (cd cli/beacon-hooks && GOOS=darwin GOARCH="$ARCH" \
-              go build -ldflags "-s -w -X ${HOOKS_LD}.Version=${VERSION}" \
+              go build -ldflags "-s -w -X ${HOOKS_LD}.Version=${VERSION} -X ${HOOKS_LD}.Edition=nuro" \
               -o ../beacon/internal/embedded/hooks.bin .)
             (cd cli/beacon && GOOS=darwin GOARCH="$ARCH" CGO_ENABLED=0 \
-              go build -a -ldflags "-s -w -X ${BEACON_LD}.Version=${VERSION} -X ${BEACON_LD}.GitCommit=$(git rev-parse --short HEAD) -X ${BEACON_LD}.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              go build -a -ldflags "-s -w -X ${BEACON_LD}.Version=${VERSION} -X ${BEACON_LD}.GitCommit=$(git rev-parse --short HEAD) -X ${BEACON_LD}.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ) -X ${BEACON_LD}.Edition=nuro" \
               -o "../../dist/pkgbins/beacon-${ARCH}" .)
           done
 

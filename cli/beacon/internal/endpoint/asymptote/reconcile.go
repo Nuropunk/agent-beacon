@@ -8,6 +8,7 @@ import (
 	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/atomicfile"
 	endpointconfig "github.com/asymptote-labs/agent-beacon/cli/beacon/internal/endpoint/config"
 	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/endpoint/service"
+	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/localonly"
 	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/managedprivacy"
 )
 
@@ -74,6 +75,12 @@ func (r ReconcileResult) Message() string {
 // Skipped or Warning result.
 func ReconcileForwarder(opts ReconcileOptions) (ReconcileResult, error) {
 	var result ReconcileResult
+	// The nuro edition's lock never re-renders or restarts a forwarder that ships the runtime log
+	// off the machine, even one an earlier build connected; it is left as it is, to be removed.
+	if localonly.Enforced() {
+		result.Skipped = "the nuro edition keeps everything on this machine; a forwarder an earlier build set up is left untouched, so run that build's `beacon endpoint uninstall` to remove it"
+		return result, nil
+	}
 	// Not connected comes first, before the service manager is asked anything: most endpoints
 	// are local-only and this runs on every install.
 	if !Connected(opts.UserMode) {

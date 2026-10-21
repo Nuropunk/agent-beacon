@@ -1,12 +1,14 @@
 package harness
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"time"
@@ -16,6 +18,8 @@ import (
 	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/endpoint/hooks"
 	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/endpoint/integrations/cowork"
 	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/hermessession"
+	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/localonly"
+	"github.com/pelletier/go-toml/v2"
 	"gopkg.in/yaml.v3"
 )
 
@@ -68,7 +72,7 @@ func DiscoverAll() []Harness {
 		DiscoverPi(),
 		DiscoverOmp(),
 		DiscoverOpenClaw(),
-		DiscoverGrok(),
+		discoverGrokUnlessHeld(),
 		DiscoverPrime(),
 		DiscoverOmo(),
 		DiscoverFx(),
@@ -386,16 +390,27 @@ func ConfigureClaude(opts ConfigureOptions) (string, error) {
 		return "", err
 	}
 	path := filepath.Join(claudesession.ConfigDir(home), "settings.json")
-	settings := map[string]interface{}{}
+	// Keys other than env are carried as raw JSON, so their values come back exactly as written
+	// (a large number does not round through float64), as the hook installer keeps them.
+	settings := map[string]json.RawMessage{}
+	env := map[string]interface{}{}
 	if data, err := os.ReadFile(path); err == nil {
-		_ = json.Unmarshal(data, &settings)
+		// Writing over settings that do not parse would drop every key in them, the person's
+		// hooks and permissions included, so refuse as the Gemini and hook installers do.
+		if err := json.Unmarshal(data, &settings); err != nil {
+			return "", fmt.Errorf("Claude settings JSON is invalid: %w", err)
+		}
+		if env, err = decodeClaudeEnv(settings["env"]); err != nil {
+			return "", fmt.Errorf("Claude settings env is invalid: %w", err)
+		}
 		if err := backup(path, data); err != nil {
 			return "", err
 		}
+	} else if !os.IsNotExist(err) {
+		return "", err
 	}
-	env, _ := settings["env"].(map[string]interface{})
-	if env == nil {
-		env = map[string]interface{}{}
+	if settings == nil { // the file held null
+		settings = map[string]json.RawMessage{}
 	}
 	env["CLAUDE_CODE_ENABLE_TELEMETRY"] = "1"
 	env["OTEL_LOGS_EXPORTER"] = "otlp"
@@ -405,6 +420,14 @@ func ConfigureClaude(opts ConfigureOptions) (string, error) {
 	env["OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE"] = "delta"
 	env["OTEL_EXPORTER_OTLP_PROTOCOL"] = "grpc"
 	env["OTEL_EXPORTER_OTLP_ENDPOINT"] = opts.Endpoint
+	// A per-signal endpoint outranks the generic one, so under the nuro edition's lock one left in
+	// settings would send prompts and tool details past the local collector. The CI path already
+	// drops them (internal/ci/harness.go).
+	if localonly.Enforced() {
+		delete(env, "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT")
+		delete(env, "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT")
+		delete(env, "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT")
+	}
 	// Tool details expose the command, file path, URL, search pattern, and MCP
 	// identity/arguments needed to reconstruct agent activity from OTel events.
 	env["OTEL_LOG_TOOL_DETAILS"] = "1"
@@ -429,7 +452,11 @@ func ConfigureClaude(opts ConfigureOptions) (string, error) {
 	case !opts.CaptureModelContext && fmt.Sprint(contentLimit) == claudeModelContextContentLimit:
 		delete(env, "CLAUDE_CODE_OTEL_CONTENT_MAX_LENGTH")
 	}
-	settings["env"] = env
+	encodedEnv, err := json.Marshal(env)
+	if err != nil {
+		return "", err
+	}
+	settings["env"] = encodedEnv
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return "", err
 	}
@@ -438,6 +465,25 @@ func ConfigureClaude(opts ConfigureOptions) (string, error) {
 		return "", err
 	}
 	return path, os.WriteFile(path, data, 0600)
+}
+
+// decodeClaudeEnv decodes the settings' env object with numbers kept as written, so an entry Beacon
+// does not set comes back unchanged. A missing or non-object env decodes as empty and is replaced.
+func decodeClaudeEnv(raw json.RawMessage) (map[string]interface{}, error) {
+	if len(raw) == 0 {
+		return map[string]interface{}{}, nil
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var decoded interface{}
+	if err := decoder.Decode(&decoded); err != nil {
+		return nil, err
+	}
+	env, ok := decoded.(map[string]interface{})
+	if !ok {
+		return map[string]interface{}{}, nil
+	}
+	return env, nil
 }
 
 func ConfigureCodex(opts ConfigureOptions) (string, error) {
@@ -450,18 +496,64 @@ func ConfigureCodex(opts ConfigureOptions) (string, error) {
 		return "", err
 	}
 	path := filepath.Join(dir, "config.toml")
-	var existing string
-	if data, err := os.ReadFile(path); err == nil {
-		existing = string(data)
+	data, readErr := os.ReadFile(path)
+	if readErr != nil && !os.IsNotExist(readErr) {
+		return "", readErr
+	}
+	existing := string(data)
+	updated := mergeCodexOTELWithPrompt(existing, opts.Endpoint, true)
+	if err := checkCodexOTEL(existing, updated, opts.Endpoint, true, codexMetricsOff(strings.Split(existing, "\n"))); err != nil {
+		return "", fmt.Errorf("%s: %w; fix it by hand, then run this again", path, err)
+	}
+	if readErr == nil {
 		if err := backup(path, data); err != nil {
 			return "", err
 		}
 	}
-	updated := mergeCodexOTELWithPrompt(existing, opts.Endpoint, true)
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return "", err
 	}
 	return path, os.WriteFile(path, []byte(updated), 0600)
+}
+
+// checkCodexOTEL parses the Codex config before and after the merge, and confirms the merged otel
+// table is exactly the one Beacon writes and nothing outside it changed. The merge works line by
+// line to keep the layout and the comments outside the otel table, and TOML has spellings it does
+// not follow (escaped
+// keys, dotted or inline otel keys at the root, a header inside a multi-line string); for those the
+// result could fail to parse, keep an exporter beside Beacon's or lose other settings, so nothing
+// is written.
+func checkCodexOTEL(existing, merged, endpoint string, logUserPrompt, metricsOff bool) error {
+	before := map[string]any{}
+	if err := toml.Unmarshal([]byte(strings.TrimPrefix(existing, "\ufeff")), &before); err != nil {
+		return fmt.Errorf("it is not valid TOML (%v)", err)
+	}
+	parsed := map[string]any{}
+	if err := toml.Unmarshal([]byte(strings.TrimPrefix(merged, "\ufeff")), &parsed); err != nil {
+		return fmt.Errorf("Beacon's telemetry settings could not be merged into valid TOML (%v)", err)
+	}
+	exporter := map[string]any{"otlp-grpc": map[string]any{"endpoint": endpoint}}
+	want := map[string]any{
+		"environment":     "dev",
+		"log_user_prompt": logUserPrompt,
+		"exporter":        exporter,
+		"trace_exporter":  exporter,
+	}
+	if metricsOff {
+		want["metrics_exporter"] = "none"
+	}
+	if !reflect.DeepEqual(parsed["otel"], want) {
+		return fmt.Errorf("its otel settings are written in a form Beacon cannot replace, and some would stay beside Beacon's")
+	}
+	delete(before, "otel")
+	delete(parsed, "otel")
+	// %#v prints maps in key order and, unlike reflect.DeepEqual, treats a nan value as equal to
+	// itself. It prints some distinct TOML values alike (1 and 1.0, one time at two offsets), which
+	// is enough here because the merge copies every line outside the otel table unchanged.
+	if fmt.Sprintf("%#v", before) != fmt.Sprintf("%#v", parsed) {
+		return fmt.Errorf("Beacon's merge would change settings outside its otel table")
+	}
+	return nil
 }
 
 func ValidateConfigured(endpoint string) []ValidationResult {
@@ -510,16 +602,21 @@ func mergeCodexOTEL(existing, endpoint string) string {
 }
 
 func mergeCodexOTELWithPrompt(existing, endpoint string, logUserPrompt bool) string {
+	// A byte-order mark would hide a header on the first line from the scan; it goes back on output.
+	bom := ""
+	if strings.HasPrefix(existing, "\ufeff") {
+		bom, existing = "\ufeff", strings.TrimPrefix(existing, "\ufeff")
+	}
 	lines := strings.Split(existing, "\n")
+	metricsOff := codexMetricsOff(lines)
 	var out []string
 	inOTEL := false
 	wroteOTEL := false
 	for _, line := range lines {
-		trim := strings.TrimSpace(line)
-		if strings.HasPrefix(trim, "[") && strings.HasSuffix(trim, "]") {
-			isOTELHeader := codexOTELHeader(trim)
+		if keys, ok := codexTableName(line); ok {
+			isOTELHeader := codexOTELTable(keys)
 			if inOTEL && !isOTELHeader && !wroteOTEL {
-				out = append(out, codexOTELBlock(endpoint, logUserPrompt)...)
+				out = append(out, codexOTELBlock(endpoint, logUserPrompt, metricsOff)...)
 				wroteOTEL = true
 			}
 			inOTEL = isOTELHeader
@@ -534,27 +631,117 @@ func mergeCodexOTELWithPrompt(existing, endpoint string, logUserPrompt bool) str
 		out = append(out, line)
 	}
 	if inOTEL && !wroteOTEL {
-		out = append(out, codexOTELBlock(endpoint, logUserPrompt)...)
+		out = append(out, codexOTELBlock(endpoint, logUserPrompt, metricsOff)...)
 		wroteOTEL = true
 	}
 	if !wroteOTEL {
 		if strings.TrimSpace(existing) != "" {
 			out = append(out, "")
 		}
-		out = append(out, codexOTELBlock(endpoint, logUserPrompt)...)
+		out = append(out, codexOTELBlock(endpoint, logUserPrompt, metricsOff)...)
 	}
-	return strings.TrimRight(strings.Join(out, "\n"), "\n") + "\n"
+	return bom + strings.TrimRight(strings.Join(out, "\n"), "\n") + "\n"
 }
 
-func codexOTELHeader(header string) bool {
-	return header == "[otel]" || strings.HasPrefix(header, "[otel.")
+// codexTableName returns the keys of the table a TOML header line opens, with the whitespace, quotes
+// and trailing comment TOML allows taken out, so `[ otel . "exporter" ] # see [docs]` reads as
+// otel, exporter and `["otel.notes"]` as the one key otel.notes. A backslash inside a basic string
+// escapes the next character. Escape sequences are kept as written, so an escaped spelling of otel
+// is not read as otel; checkCodexOTEL then refuses the config rather than leave its table in place.
+func codexTableName(line string) ([]string, bool) {
+	trim := strings.TrimSpace(line)
+	if !strings.HasPrefix(trim, "[") {
+		return nil, false
+	}
+	body := trim[1:]
+	array := strings.HasPrefix(body, "[")
+	if array {
+		body = body[1:]
+	}
+	var keys []string
+	var key strings.Builder
+	var quote rune
+	escaped := false
+	for i, r := range body {
+		switch {
+		case escaped:
+			key.WriteRune(r)
+			escaped = false
+		case quote == '"' && r == '\\':
+			key.WriteRune(r)
+			escaped = true
+		case quote != 0:
+			if r == quote {
+				quote = 0
+			} else {
+				key.WriteRune(r)
+			}
+		case r == '"' || r == '\'':
+			quote = r
+		case r == ']':
+			rest := body[i+1:]
+			if array {
+				if !strings.HasPrefix(rest, "]") {
+					return nil, false
+				}
+				rest = rest[1:]
+			}
+			if rest = strings.TrimSpace(rest); rest != "" && !strings.HasPrefix(rest, "#") {
+				return nil, false
+			}
+			return append(keys, key.String()), true
+		case r == '.':
+			keys = append(keys, key.String())
+			key.Reset()
+		case r != ' ' && r != '\t':
+			key.WriteRune(r)
+		}
+	}
+	return nil, false
 }
 
-func codexOTELBlock(endpoint string, logUserPrompt bool) []string {
-	return []string{
+func codexOTELTable(keys []string) bool {
+	return len(keys) > 0 && keys[0] == "otel"
+}
+
+// codexMetricsOff reports whether Beacon's otel table turns Codex's metrics exporter off: always
+// under the nuro edition's lock, since Beacon collects no Codex metrics and Codex's own default
+// exporter was not checked, and otherwise when the person's table already did.
+func codexMetricsOff(lines []string) bool {
+	return localonly.Enforced() || codexMetricsOptedOut(lines)
+}
+
+// codexMetricsOptedOut reports whether the existing [otel] table turns Codex's metrics exporter off.
+// Beacon replaces the whole table, so it writes that opt-out back rather than drop it.
+func codexMetricsOptedOut(lines []string) bool {
+	inOTEL := false
+	for _, line := range lines {
+		if keys, ok := codexTableName(line); ok {
+			inOTEL = len(keys) == 1 && keys[0] == "otel"
+			continue
+		}
+		key, value, found := strings.Cut(line, "=")
+		if !found || !inOTEL || strings.Trim(strings.TrimSpace(key), `"'`) != "metrics_exporter" {
+			continue
+		}
+		value, _, _ = strings.Cut(value, "#")
+		if strings.Trim(strings.TrimSpace(value), `"'`) == "none" {
+			return true
+		}
+	}
+	return false
+}
+
+func codexOTELBlock(endpoint string, logUserPrompt, metricsOff bool) []string {
+	block := []string{
 		"[otel]",
 		"environment = \"dev\"",
 		fmt.Sprintf("log_user_prompt = %t", logUserPrompt),
+	}
+	if metricsOff {
+		block = append(block, "metrics_exporter = \"none\"")
+	}
+	return append(block,
 		"",
 		"[otel.exporter.\"otlp-grpc\"]",
 		fmt.Sprintf("endpoint = %q", endpoint),
@@ -565,7 +752,7 @@ func codexOTELBlock(endpoint string, logUserPrompt bool) []string {
 		// the same turn through both channels.
 		"[otel.trace_exporter.\"otlp-grpc\"]",
 		fmt.Sprintf("endpoint = %q", endpoint),
-	}
+	)
 }
 
 func claudeStatus(path string) (TelemetryStatus, string) {

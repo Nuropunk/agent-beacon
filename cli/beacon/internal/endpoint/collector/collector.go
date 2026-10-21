@@ -12,6 +12,8 @@ import (
 
 	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/brewpath"
 	endpointconfig "github.com/asymptote-labs/agent-beacon/cli/beacon/internal/endpoint/config"
+	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/localonly"
+	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -131,11 +133,15 @@ func WriteConfig(cfg endpointconfig.Config) error {
 func ConfigYAML(cfg endpointconfig.Config) string {
 	endpointconfig.NormalizeDestinations(&cfg)
 	exporterNames := []string{"beaconjson"}
-	splunkExporter := splunkHECYAML(cfg)
+	// Under the nuro edition's lock the collector writes the local log only: a Splunk or Falcon
+	// destination left in config.json by an earlier install is not rendered.
+	splunkExporter, falconExporter := "", ""
+	if !localonly.Enforced() {
+		splunkExporter, falconExporter = splunkHECYAML(cfg), falconHECYAML(cfg)
+	}
 	if splunkExporter != "" {
 		exporterNames = append(exporterNames, "splunk_hec")
 	}
-	falconExporter := falconHECYAML(cfg)
 	if falconExporter != "" {
 		exporterNames = append(exporterNames, "falcon_hec")
 	}
@@ -208,6 +214,29 @@ service:
       processors: [memory_limiter, batch]
       exporters: %s
 `, cfg.Collector.GRPCPort, grpcLimitYAML, cfg.Collector.HTTPPort, modelContextYAML, cfg.LogPath, runtimeMetricsYAML+codexSpansYAML+modelContextYAML+splunkExporter+falconExporter, endpointconfig.HealthCheckPort(cfg.Collector), exporters, exporters, exporters)
+}
+
+// ExportsLocallyOnly reports whether the collector config at path exports to the local log alone.
+// A rollback under the nuro edition's lock checks it before starting a collector on a config it put
+// back, which an earlier build may have written with a Splunk or Falcon exporter. A config that
+// cannot be read or parsed counts as not local.
+func ExportsLocallyOnly(path string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	var parsed struct {
+		Exporters map[string]yaml.Node `yaml:"exporters"`
+	}
+	if yaml.Unmarshal(data, &parsed) != nil {
+		return false
+	}
+	for name := range parsed.Exporters {
+		if name != "beaconjson" {
+			return false
+		}
+	}
+	return true
 }
 
 func splunkHECYAML(cfg endpointconfig.Config) string {

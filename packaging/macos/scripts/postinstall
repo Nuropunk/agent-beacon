@@ -112,14 +112,25 @@ restore_existing_forwarder() {
   return 1
 }
 
+# The nuro edition keeps everything on this machine: it does not restart a forwarder an earlier
+# build installed, or reconcile a Beacon Cloud forwarder (the lock refuses that command). Its
+# self-updater is off, so `endpoint update install-daemon` below removes any updater left behind.
+nuro_edition() {
+  "${BEACON_BIN:-/opt/beacon/bin/beacon}" version 2>/dev/null | grep -q 'nuro edition'
+}
+
 if command -v launchctl >/dev/null 2>&1; then
   launchctl bootout system/com.beacon.endpoint.collector >/dev/null 2>&1 || true
   launchctl bootstrap system /Library/LaunchDaemons/com.beacon.endpoint.collector.plist >/dev/null 2>&1 || {
     launchctl print system/com.beacon.endpoint.collector >/dev/null 2>&1 || exit 1
   }
-  restore_existing_forwarder "com.beacon.endpoint.falcon-forwarder" "/Library/LaunchDaemons/com.beacon.endpoint.falcon-forwarder.plist"
-  restore_existing_forwarder "com.beacon.endpoint.s3-forwarder" "/Library/LaunchDaemons/com.beacon.endpoint.s3-forwarder.plist"
-  restore_existing_forwarder "com.beacon.endpoint.gcs-forwarder" "/Library/LaunchDaemons/com.beacon.endpoint.gcs-forwarder.plist"
+  if nuro_edition; then
+    echo "Beacon nuro edition: forwarders from an earlier install are not restarted (their LaunchDaemons still load at boot until an uninstall removes them)" >&2
+  else
+    restore_existing_forwarder "com.beacon.endpoint.falcon-forwarder" "/Library/LaunchDaemons/com.beacon.endpoint.falcon-forwarder.plist"
+    restore_existing_forwarder "com.beacon.endpoint.s3-forwarder" "/Library/LaunchDaemons/com.beacon.endpoint.s3-forwarder.plist"
+    restore_existing_forwarder "com.beacon.endpoint.gcs-forwarder" "/Library/LaunchDaemons/com.beacon.endpoint.gcs-forwarder.plist"
+  fi
   "${BEACON_BIN:-/opt/beacon/bin/beacon}" endpoint update install-daemon || {
     echo "Error: could not reconcile Beacon endpoint updater daemon" >&2
     exit 1
@@ -133,8 +144,10 @@ if command -v launchctl >/dev/null 2>&1; then
   # validated, and swapped in with a forwarder restart only when it changed. The install above ran
   # with --no-start, so it left this to the package. Never enrolls or touches the device key, and
   # a no-op on an endpoint that is not connected. Non-fatal: a rejected config keeps the old one.
-  "${BEACON_BIN:-/opt/beacon/bin/beacon}" endpoint asymptote reconcile --system || \
-    echo "Warning: Beacon Cloud forwarder config not reconciled (endpoint is installed and running)" >&2
+  if ! nuro_edition; then
+    "${BEACON_BIN:-/opt/beacon/bin/beacon}" endpoint asymptote reconcile --system || \
+      echo "Warning: Beacon Cloud forwarder config not reconciled (endpoint is installed and running)" >&2
+  fi
 fi
 
 exit 0

@@ -48,6 +48,11 @@ func ConfigureGemini(opts ConfigureOptions) (string, error) {
 		if err := backup(path, data); err != nil {
 			return "", err
 		}
+	} else if !os.IsNotExist(err) {
+		return "", err
+	}
+	if settings == nil { // the file held null
+		settings = map[string]interface{}{}
 	}
 
 	telemetry, _ := settings["telemetry"].(map[string]interface{})

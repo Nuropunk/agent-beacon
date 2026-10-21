@@ -7,7 +7,9 @@ export CGO_ENABLED = 0
 
 # Build variables
 BINARY := beacon-hooks
-LDFLAGS := -s -w
+# The nuro edition, as cli/beacon/Makefile builds it; EDITION=community builds without the lock.
+EDITION ?= nuro
+LDFLAGS := -s -w -X github.com/asymptote-labs/agent-beacon/cli/beacon-hooks/internal/version.Edition=$(EDITION)
 
 .PHONY: all build clean test build-all build-darwin build-linux build-windows compress
 

@@ -1,0 +1,65 @@
+id: gated-chain-or-wallet-action
+version: 1
+title: Agent touched a wallet, sent coins or wrote to a chain
+description: >
+  An agent ran a wallet or chain command that moves value, reveals key
+  material, or writes on chain: ord wallet send or inscribe, a bitcoin-cli
+  send, key dump or passphrase unlock, an OpenTimestamps stamp, a Foundry
+  cast send, or a NEAR send, deploy or call. These are steps an owner keeps
+  for themselves; agents should never hold keys or seeds. Read-only queries
+  (balances, inscriptions lists, verify) are excluded.
+severity: high
+status: experimental
+posture: detect
+taxonomy:
+  beacon_category: owner-gates
+
+match: >
+  e.event.action == "command.executed" && (
+    e.command.command.matches("(?i)(^|[;&|]\\s*)ord\\b[^;&|]*\\bwallet\\b[^;&|]*\\b(send|inscribe|burn|restore|dump)\\b") ||
+    e.command.command.matches("(?i)(^|[;&|]\\s*)bitcoin-cli\\b[^;&|]*\\b(sendtoaddress|sendmany|send|sendall|walletpassphrase|dumpprivkey|dumpwallet)\\b") ||
+    e.command.command.matches("(?i)(^|[;&|]\\s*)ots\\s+stamp\\b") ||
+    e.command.command.matches("(?i)(^|[;&|]\\s*)cast\\s+(send|publish)\\b") ||
+    e.command.command.matches("(?i)(^|[;&|]\\s*)near\\s+(send|send-near|deploy|call|create-account|delete-account)\\b")
+  )
+
+emit:
+  reason: "An agent ran a wallet, send or on-chain write command"
+
+tests:
+  - name: ord_inscribe
+    verdict: match
+    events:
+      - event: { action: command.executed }
+        command: { command: "ord wallet inscribe --fee-rate 12 --file mask.png" }
+        session: { id: s1 }
+  - name: bitcoin_cli_send
+    verdict: match
+    events:
+      - event: { action: command.executed }
+        command: { command: "bitcoin-cli -rpcwallet=art sendtoaddress bc1qexample 0.01" }
+        session: { id: s1 }
+  - name: ots_stamp
+    verdict: match
+    events:
+      - event: { action: command.executed }
+        command: { command: "ots stamp release.sha256" }
+        session: { id: s1 }
+  - name: near_deploy
+    verdict: match
+    events:
+      - event: { action: command.executed }
+        command: { command: "near deploy app.testnet out/main.wasm" }
+        session: { id: s1 }
+  - name: ord_balance_is_read_only
+    verdict: no_match
+    events:
+      - event: { action: command.executed }
+        command: { command: "ord wallet balance" }
+        session: { id: s1 }
+  - name: ots_verify_is_read_only
+    verdict: no_match
+    events:
+      - event: { action: command.executed }
+        command: { command: "ots verify release.sha256.ots" }
+        session: { id: s1 }

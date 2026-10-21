@@ -1,0 +1,55 @@
+id: held-engine-activity
+version: 1
+title: A held agent engine ran
+description: >
+  The runtime log holds activity from the Grok engine, or an agent started
+  its CLI. The nuro edition keeps that engine on hold and never installs its
+  hooks, so any event from it means it was set up or run outside Beacon, and
+  a command starting it means another agent tried to hand it work. Edit the
+  name pattern to hold a different engine.
+severity: medium
+status: experimental
+posture: detect
+taxonomy:
+  beacon_category: owner-gates
+
+match: >
+  e.harness.name.matches("(?i)^grok") ||
+  (e.event.action == "command.executed" &&
+    e.command.command.matches("(?i)(^|[;&|]\\s*|\\bnpx\\s+|/)grok(\\s|$)"))
+
+emit:
+  reason: "Activity from an agent engine that is on hold"
+
+tests:
+  - name: grok_event
+    verdict: match
+    events:
+      - event: { action: session.started }
+        harness: { name: grok_build }
+        session: { id: s1 }
+  - name: grok_started_by_another_agent
+    verdict: match
+    events:
+      - event: { action: command.executed }
+        harness: { name: codex_cli }
+        command: { command: "grok -p 'summarize this repo'" }
+        session: { id: s1 }
+  - name: grok_by_path
+    verdict: match
+    events:
+      - event: { action: command.executed }
+        command: { command: "/usr/local/bin/grok --version" }
+        session: { id: s1 }
+  - name: claude_event
+    verdict: no_match
+    events:
+      - event: { action: session.started }
+        harness: { name: claude_code }
+        session: { id: s1 }
+  - name: word_in_text
+    verdict: no_match
+    events:
+      - event: { action: command.executed }
+        command: { command: "rg grokking docs/" }
+        session: { id: s1 }

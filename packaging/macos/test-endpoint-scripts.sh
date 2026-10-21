@@ -77,6 +77,56 @@ if ! grep -q 'forwarder_stably_running' "$ROOT_DIR/packaging/macos/scripts/posti
   echo "postinstall should wait for bootout and verify stable forwarder startup" >&2
   exit 1
 fi
+# Run postinstall against fakes, once per edition: the nuro edition must not restart the optional
+# forwarders or reconcile Beacon Cloud, and both editions run the updater step (under the nuro
+# edition's lock it removes any updater left behind).
+run_postinstall_as() {
+  version_suffix="$1"
+  calls="$2"
+  work="$(mktemp -d)"
+  mkdir -p "$work/bin" "$work/LaunchDaemons"
+  for forwarder in falcon s3 gcs; do
+    : >"$work/LaunchDaemons/com.beacon.endpoint.$forwarder-forwarder.plist"
+  done
+  {
+    echo '#!/bin/sh'
+    echo "echo \"launchctl \$*\" >>'$calls'"
+    echo '[ "$1" = print ] && echo "state = running"'
+    echo 'exit 0'
+  } >"$work/bin/launchctl"
+  {
+    echo '#!/bin/sh'
+    echo "echo \"beacon \$*\" >>'$calls'"
+    echo "[ \"\$1\" = version ] && echo 'beacon version v0.0.0 (test)$version_suffix'"
+    echo 'exit 0'
+  } >"$work/beacon"
+  printf '#!/bin/sh\nexit 0\n' >"$work/install-endpoint.sh"
+  chmod +x "$work/bin/launchctl" "$work/beacon" "$work/install-endpoint.sh"
+  sed -e "s#/opt/beacon/scripts/install-endpoint.sh#$work/install-endpoint.sh#" \
+    -e "s#/Library/LaunchDaemons/#$work/LaunchDaemons/#g" \
+    "$ROOT_DIR/packaging/macos/scripts/postinstall" >"$work/postinstall"
+  if ! PATH="$work/bin:$PATH" BEACON_BIN="$work/beacon" sh "$work/postinstall" >/dev/null 2>&1; then
+    echo "postinstall failed against fakes (version suffix '$version_suffix')" >&2
+    exit 1
+  fi
+  rm -rf "$work"
+}
+nuro_calls="$(mktemp)"
+community_calls="$(mktemp)"
+run_postinstall_as ", nuro edition" "$nuro_calls"
+run_postinstall_as "" "$community_calls"
+if grep -q -- '-forwarder' "$nuro_calls" || grep -q 'endpoint asymptote reconcile' "$nuro_calls" ||
+   ! grep -q 'endpoint update install-daemon' "$nuro_calls"; then
+  echo "the nuro edition's postinstall should leave old forwarders and Beacon Cloud alone and still run the updater step" >&2
+  exit 1
+fi
+if ! grep -q 'kickstart -k system/com.beacon.endpoint.s3-forwarder' "$community_calls" ||
+   ! grep -q 'endpoint asymptote reconcile' "$community_calls" ||
+   ! grep -q 'endpoint update install-daemon' "$community_calls"; then
+  echo "the community postinstall should restore forwarders, reconcile Beacon Cloud and install the updater as before" >&2
+  exit 1
+fi
+rm -f "$nuro_calls" "$community_calls"
 if ! grep -q 'com.beacon.endpoint.gcs-forwarder' "$ROOT_DIR/packaging/macos/scripts/postinstall"; then
   echo "postinstall should restore the optional GCS forwarder" >&2
   exit 1

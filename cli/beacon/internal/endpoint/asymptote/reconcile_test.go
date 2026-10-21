@@ -10,6 +10,7 @@ import (
 	"time"
 
 	endpointconfig "github.com/asymptote-labs/agent-beacon/cli/beacon/internal/endpoint/config"
+	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/localonly"
 	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/managedprivacy"
 	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/testenv"
 )
@@ -147,6 +148,29 @@ func TestReconcileReplacesAStaleTransformAndRestartsTheForwarder(t *testing.T) {
 	leftovers, _ := filepath.Glob(filepath.Join(Dir(true), ".vector-*"))
 	if len(leftovers) != 0 {
 		t.Fatalf("reconcile left temporary files: %v", leftovers)
+	}
+}
+
+func TestReconcileNeverTouchesTheForwarderUnderTheLock(t *testing.T) {
+	f := newReconcileFixture(t, "metadata-only")
+	writeStaleConfig(t)
+	t.Setenv(localonly.Env, "1")
+	before, _ := os.ReadFile(VectorConfigPath(true))
+	loads, unloads := f.fwd.loads, f.fwd.unloads
+
+	result, err := ReconcileForwarder(ReconcileOptions{UserMode: true, Forwarder: f.fwd})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Skipped == "" || result.Updated || result.Restarted {
+		t.Fatalf("result = %+v, want skipped under the lock", result)
+	}
+	after, _ := os.ReadFile(VectorConfigPath(true))
+	if !bytes.Equal(before, after) {
+		t.Fatal("the lock let reconcile rewrite vector.toml")
+	}
+	if f.fwd.loads != loads || f.fwd.unloads != unloads {
+		t.Fatal("the lock let reconcile restart the forwarder")
 	}
 }
 

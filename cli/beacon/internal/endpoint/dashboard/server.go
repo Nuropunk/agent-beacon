@@ -399,7 +399,11 @@ func Handler(opts Options) (http.Handler, error) {
 		}
 		writeJSON(w, record)
 	})
-	mux.Handle("/", http.FileServer(http.FS(staticRoot)))
+	var static http.Handler = http.FileServer(http.FS(staticRoot))
+	if theme := dashboardTheme(); theme != "" {
+		static = themedPages(staticRoot, theme, static)
+	}
+	mux.Handle("/", static)
 	return securityHeaders(mux), nil
 }
 

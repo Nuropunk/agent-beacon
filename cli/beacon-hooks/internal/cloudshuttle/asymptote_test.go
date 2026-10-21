@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/asymptote-labs/agent-beacon/cli/beacon-hooks/internal/version"
 )
 
 type ingestCall struct {
@@ -243,5 +245,24 @@ func TestSessionStartShipsALogWhoseRunNeverUploaded(t *testing.T) {
 	}
 	if matches, _ := filepath.Glob(cfg.LogPath + ".previous-*"); len(matches) != 0 {
 		t.Fatalf("no .previous-* copy should be left behind: %v", matches)
+	}
+}
+
+// The nuro edition's lock turns every upload off, even one the environment fully configures.
+func TestLocalOnlyTurnsUploadsOff(t *testing.T) {
+	base := Config{Upload: uploadAsymptote, DeviceKey: "bcn_device_x", IngestURL: "https://ingest.example"}
+	s3 := Config{Upload: uploadS3, Bucket: "b", S3AccessKeyID: "id", S3SecretKey: "secret"}
+
+	t.Setenv("BEACON_LOCAL_ONLY", "1")
+	if uploadConfigured(base) || uploadConfigured(s3) {
+		t.Fatal("BEACON_LOCAL_ONLY=1 left an upload configured")
+	}
+
+	t.Setenv("BEACON_LOCAL_ONLY", "")
+	prev := version.Edition
+	version.Edition = "nuro"
+	t.Cleanup(func() { version.Edition = prev })
+	if uploadConfigured(base) || uploadConfigured(s3) {
+		t.Fatal("the nuro edition left an upload configured")
 	}
 }

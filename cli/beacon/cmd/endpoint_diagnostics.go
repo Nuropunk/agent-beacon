@@ -32,6 +32,7 @@ import (
 	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/endpoint/schema"
 	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/endpoint/service"
 	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/endpoint/writer"
+	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/localonly"
 	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/sessionfs"
 	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/version"
 )
@@ -101,8 +102,11 @@ type repairRollback struct {
 	manager          repairServiceManager
 	serviceWasLoaded bool
 	serviceLoaded    bool
-	files            []string
-	snapshots        map[string]repairFileSnapshot
+	// collectorConfig is the collector config the reloaded service reads; under the nuro edition's
+	// lock the service is reloaded only if that config exports locally alone.
+	collectorConfig string
+	files           []string
+	snapshots       map[string]repairFileSnapshot
 }
 
 var (
@@ -1647,6 +1651,7 @@ func repairCollectorServiceFromStatus(status lifecycle.Status) error {
 	rollback := newRepairRollback(manager, status.Service.Loaded)
 	rollback.Track(endpointconfig.ConfigPath(userMode))
 	rollback.Track(cfg.Collector.ConfigPath)
+	rollback.collectorConfig = cfg.Collector.ConfigPath
 	rollback.Track(plistPath)
 
 	if endpointOpts.logPath != "" {
@@ -1711,11 +1716,23 @@ func (r *repairRollback) Rollback() error {
 		}
 	}
 	if r.serviceWasLoaded {
-		if err := r.manager.Load(); err != nil {
+		// The config put back may be an earlier build's, forwarding to Splunk or Falcon.
+		if localonly.Enforced() && !endpointcollector.ExportsLocallyOnly(r.collectorConfig) {
+			errs = append(errs, collectorNotReloaded(r.collectorConfig))
+		} else if err := r.manager.Load(); err != nil {
 			errs = append(errs, err)
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// collectorNotReloaded says why a rollback under the lock left the collector service alone. It does
+// not say whether the collector is running: a repair that failed before reloading it never stopped it.
+func collectorNotReloaded(path string) error {
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("did not reload the collector service, because no collector config is left at %s; run `beacon endpoint repair` once it can succeed", path)
+	}
+	return fmt.Errorf("did not reload the collector service on the config put back at %s, which Beacon cannot confirm exports only to the local log; run `beacon endpoint repair` once it can succeed, or `beacon endpoint uninstall`", path)
 }
 
 func rollbackRepairError(err error, rollback *repairRollback) error {

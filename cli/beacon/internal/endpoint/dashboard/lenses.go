@@ -239,7 +239,11 @@ func (r *lensRegistry) list() LensListResponse {
 // The meta element repeats the X-DNS-Prefetch-Control header in the document itself, so a lens
 // file opened outside the frame route still has implicit DNS prefetching turned off.
 func lensPrelude() []byte {
-	return []byte("<style>" + lensTokensCSS + "</style>" + lensDNSPrefetchMeta + "<script>" + lensPreludeJS + "</script>")
+	tokens := lensTokensCSS
+	if dashboardTheme() == nuroTheme {
+		tokens += nuroLensTokensCSS
+	}
+	return []byte("<style>" + tokens + "</style>" + lensDNSPrefetchMeta + "<script>" + lensPreludeJS + "</script>")
 }
 
 // lensDNSPrefetchMeta turns off the browser's implicit DNS prefetching of hostnames in the page.

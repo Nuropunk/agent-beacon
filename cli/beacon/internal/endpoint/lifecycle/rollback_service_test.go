@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/localonly"
 )
 
 // recordingService notes what rollback asked of the service manager, in order, interleaved with
@@ -105,6 +107,48 @@ func TestRollbackStopsBeforeRestoringTheServiceStateFile(t *testing.T) {
 	}
 	if got := strings.Join(calls, ","); !strings.Contains(got, "unload,load") {
 		t.Errorf("calls = %v, want the service stopped and then brought back", calls)
+	}
+}
+
+// Under the nuro edition's lock the config a rollback puts back may be an earlier build's,
+// forwarding to Splunk. The collector that was running on it is then left stopped.
+func TestRollbackUnderTheLockRestartsOnlyALocalCollector(t *testing.T) {
+	t.Setenv(localonly.Env, "1")
+	const local = "exporters:\n  beaconjson:\n    path: /tmp/runtime.jsonl\n"
+	for name, tc := range map[string]struct {
+		before string
+		want   []string
+	}{
+		"local log only":            {local, []string{"unload", "load"}},
+		"an earlier build's Splunk": {local + "  splunk_hec:\n    endpoint: https://splunk.example:8088/services/collector\n", []string{"unload"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "otelcol.yaml")
+			if err := os.WriteFile(path, []byte(tc.before), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			var calls []string
+			r := &installRollback{
+				Manager:             recordingService{calls: &calls},
+				ServiceLoaded:       true,
+				ServiceWasRunning:   true,
+				CollectorConfigPath: path,
+				snapshots:           map[string]fileSnapshot{},
+			}
+			r.Track(path)
+			if err := os.WriteFile(path, []byte(local), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			r.Rollback(Manifest{})
+
+			if strings.Join(calls, ",") != strings.Join(tc.want, ",") {
+				t.Errorf("rollback called %v, want %v", calls, tc.want)
+			}
+			if data, err := os.ReadFile(path); err != nil || string(data) != tc.before {
+				t.Errorf("collector config = %q, %v; want the earlier one restored", data, err)
+			}
+		})
 	}
 }
 

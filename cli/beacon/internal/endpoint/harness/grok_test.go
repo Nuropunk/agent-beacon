@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/groksession"
+	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/localonly"
 	"github.com/asymptote-labs/agent-beacon/cli/beacon/internal/testenv"
 	"github.com/asymptote-labs/agent-beacon/pkg/asymptoteobserve"
 )
@@ -183,5 +184,44 @@ func TestDiscoverGrokWritesNothing(t *testing.T) {
 			names = append(names, entry.Name())
 		}
 		t.Fatalf("discovery created %v in a home that had nothing", names)
+	}
+}
+
+// Under the nuro edition's lock, discovery must not run the held engine's binary, even to ask its
+// version: the lock means Beacon never executes it.
+func TestDiscoverAllDoesNotRunGrokUnderTheLock(t *testing.T) {
+	testenv.RequirePOSIXExecutableFixtures(t)
+	grokHome(t)
+	bin := t.TempDir()
+	marker := filepath.Join(t.TempDir(), "ran")
+	script := "#!/bin/sh\necho ran > '" + marker + "'\necho grok 1.0\n"
+	if err := os.WriteFile(filepath.Join(bin, "grok"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	t.Setenv(localonly.Env, "1")
+
+	found := false
+	for _, h := range DiscoverAll() {
+		if h.Name == GrokName {
+			found = true
+			if !strings.Contains(h.Message, "on hold") || h.Detected {
+				t.Errorf("Grok under the lock = %+v, want an undetected harness on hold", h)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("DiscoverAll dropped %q instead of reporting it on hold", GrokName)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("discovery executed the held grok binary")
+	}
+
+	t.Setenv(localonly.Env, "")
+	if h := DiscoverGrok(); !h.Detected {
+		t.Fatalf("without the lock the fake grok was not detected: %+v", h)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatal("without the lock discovery should run grok --version as upstream does")
 	}
 }
